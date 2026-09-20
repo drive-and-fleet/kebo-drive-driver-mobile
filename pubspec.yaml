@@ -1,0 +1,34 @@
+name: fleet_driver_app
+description: Offline-first driver application for the Fleet / Driver Service platform.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.38.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: 4.15.0
+  firebase_auth: 6.7.0
+  google_sign_in: 7.2.0
+  flutter_facebook_auth: 7.2.0
+  flutter_secure_storage: 11.2.0
+  sqflite: 2.4.4
+  path: 1.9.1
+  path_provider: 2.1.6
+  connectivity_plus: 7.3.1
+  image_picker: 1.2.3
+  signature: 6.4.0
+  uuid: 4.6.0
+  http: 1.6.0
+  crypto: 3.0.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+
+flutter:
+  uses-material-design: true

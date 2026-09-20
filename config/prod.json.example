@@ -1,0 +1,11 @@
+{
+  "DRIVER_API_BASE_URL": "https://api.example.com",
+  "FIREBASE_PROJECT_ID": "your-firebase-project",
+  "FIREBASE_API_KEY": "your-firebase-api-key",
+  "FIREBASE_MESSAGING_SENDER_ID": "your-sender-id",
+  "FIREBASE_ANDROID_APP_ID": "1:000000000000:android:replace",
+  "FIREBASE_IOS_APP_ID": "1:000000000000:ios:replace",
+  "FIREBASE_IOS_BUNDLE_ID": "hu.example.fleetdriver",
+  "GOOGLE_SERVER_CLIENT_ID": "your-web-oauth-client.apps.googleusercontent.com",
+  "GOOGLE_IOS_CLIENT_ID": "your-ios-oauth-client.apps.googleusercontent.com"
+}
