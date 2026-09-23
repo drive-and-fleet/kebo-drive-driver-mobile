@@ -14,9 +14,26 @@ class LocalRepository {
 
   Future<void> cacheLegs(Iterable<DriverLeg> legs) async {
     final db = await _db;
+    // ponytail: a lokális státusz nyer, amíg a hozzá tartozó sync op le nem fut —
+    // különben a szerver régi IN_PROGRESS-e visszahozná a "Fuvar lezárása" gombot.
+    final pendingRows = await db.query('sync_operation',
+        columns: ['entity_id'],
+        where: "state IN ('PENDING','RUNNING','ERROR','CONFLICT') "
+            "AND operation_type IN ('START_LEG','COMPLETE_LEG')");
+    final pending = {for (final row in pendingRows) '${row['entity_id']}'};
+    final localStatus = <String, String>{};
+    if (pending.isNotEmpty) {
+      for (final row in await db.query('cached_leg', columns: ['leg_key', 'status'])) {
+        localStatus['${row['leg_key']}'] = '${row['status']}';
+      }
+    }
     final batch = db.batch();
     for (final leg in legs) {
-      batch.insert('cached_leg', leg.toCacheMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      final map = leg.toCacheMap();
+      if (pending.contains(leg.legKey) && localStatus[leg.legKey] != null) {
+        map['status'] = localStatus[leg.legKey];
+      }
+      batch.insert('cached_leg', map, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }
@@ -232,12 +249,12 @@ class LocalRepository {
     });
   }
 
-  Future<List<PreviousInspection>> previousInspections(String legKey, String phase) async {
+  Future<List<PreviousInspection>> previousInspections(String legKey) async {
     final db = await _db;
     final rows = await db.query(
       'previous_inspection',
-      where: 'leg_key = ? AND inspection_type = ?',
-      whereArgs: [legKey, phase],
+      where: 'leg_key = ?',
+      whereArgs: [legKey],
       orderBy: 'completed_at DESC',
     );
     final result = <PreviousInspection>[];
@@ -259,11 +276,25 @@ class LocalRepository {
     return result;
   }
 
+  /// A szakasz lokálisan már kitöltött jegyzőkönyvei — ezekből offline is lehet
+  /// másolni, akkor is, ha a szinkron még nem futott le.
+  Future<List<LocalInspectionDraft>> localInspectionsForCopy(String legKey, String phase) async {
+    final db = await _db;
+    final rows = await db.query(
+      'local_inspection',
+      where: 'leg_key = ? AND inspection_type = ? AND status IN (?, ?)',
+      whereArgs: [legKey, phase, 'COMPLETED_LOCAL', 'SYNCED'],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(LocalInspectionDraft.fromMap).toList();
+  }
+
   Future<LocalInspectionDraft> createOrResumeInspection({
     required String legKey,
     required String formTypeId,
     required String phase,
     String? copyFromServerId,
+    String? copyFromLocalId,
   }) async {
     final db = await _db;
     final existing = await db.query(
@@ -291,6 +322,8 @@ class LocalRepository {
       });
       if (copyFromServerId != null) {
         await _copyBaseline(txn, localId, formTypeId, copyFromServerId);
+      } else if (copyFromLocalId != null) {
+        await _copyFromLocal(txn, localId, formTypeId, copyFromLocalId);
       }
     });
     return (await inspection(localId))!;
@@ -308,7 +341,7 @@ class LocalRepository {
         'field_definition_id': fieldId,
         'value_text': value['value_text'],
         'value_number': value['value_number'],
-        'value_boolean': value['value_boolean'],
+        'value_boolean': value['value_boolean'] == null ? null : (value['value_boolean'] == true ? 1 : 0),
         'value_date': value['value_date'],
         'value_datetime': value['value_datetime'],
       });
@@ -343,6 +376,9 @@ class LocalRepository {
     final sourcePhotos = await txn.query('previous_photo', where: 'inspection_server_id = ?', whereArgs: [sourceId]);
     for (final photo in sourcePhotos) {
       final sourceDamage = photo['damage_id']?.toString();
+      // Csak sérülésfotó másolható: a kötelező járműfotókat a leadáskori
+      // állapotról újra el kell készíteni.
+      if (sourceDamage == null) continue;
       await txn.insert('local_photo', {
         'local_id': _uuid.v4(),
         'server_id': null,
@@ -354,6 +390,62 @@ class LocalRepository {
         'storage_key': photo['storage_key'],
         'captured_at': photo['captured_at'] ?? DateTime.now().toUtc().toIso8601String(),
         'baseline': 1,
+      });
+    }
+  }
+
+  /// Lokális jegyzőkönyvből másol. A sorok `baseline: 0`-val jönnek létre, mert
+  /// szerveroldali forrás híján a mobilnak kell feltöltenie mindent — a
+  /// sync_service a baseline sorokat szándékosan kihagyja.
+  Future<void> _copyFromLocal(Transaction txn, String localId, String formTypeId, String sourceLocalId) async {
+    final allowedFields = await txn.query('cached_form_field', columns: ['field_definition_id'], where: 'form_type_id = ?', whereArgs: [formTypeId]);
+    final allowed = allowedFields.map((row) => '${row['field_definition_id']}').toSet();
+
+    final sourceValues = await txn.query('local_inspection_value', where: 'inspection_local_id = ?', whereArgs: [sourceLocalId]);
+    for (final value in sourceValues) {
+      final fieldId = '${value['field_definition_id']}';
+      if (!allowed.contains(fieldId)) continue;
+      await txn.insert('local_inspection_value', {
+        ...value,
+        'inspection_local_id': localId,
+      });
+      final optionRows = await txn.query('local_inspection_value_option',
+          where: 'inspection_local_id = ? AND field_definition_id = ?', whereArgs: [sourceLocalId, fieldId]);
+      for (final option in optionRows) {
+        await txn.insert('local_inspection_value_option', {
+          'inspection_local_id': localId,
+          'field_definition_id': fieldId,
+          'option_id': option['option_id'],
+        });
+      }
+    }
+
+    final damageMap = <String, String>{};
+    for (final damage in await txn.query('local_damage', where: 'inspection_local_id = ?', whereArgs: [sourceLocalId])) {
+      final newId = _uuid.v4();
+      damageMap['${damage['local_id']}'] = newId;
+      await txn.insert('local_damage', {
+        ...damage,
+        'local_id': newId,
+        'server_id': null,
+        'inspection_local_id': localId,
+        'source_server_id': null,
+        'baseline': 0,
+      });
+    }
+    for (final photo in await txn.query('local_photo', where: 'inspection_local_id = ?', whereArgs: [sourceLocalId])) {
+      if (photo['local_path'] == null) continue; // nincs helyi fájl, nem tudnánk feltölteni
+      final sourceDamage = photo['damage_local_id']?.toString();
+      if (sourceDamage == null) continue; // csak sérülésfotó másolható
+      await txn.insert('local_photo', {
+        ...photo,
+        'local_id': _uuid.v4(),
+        'server_id': null,
+        'inspection_local_id': localId,
+        'damage_local_id': sourceDamage == null ? null : damageMap[sourceDamage],
+        'source_server_id': null,
+        'storage_key': null,
+        'baseline': 0,
       });
     }
   }
@@ -390,7 +482,7 @@ class LocalRepository {
         'field_definition_id': fieldId,
         'value_text': value['value_text'],
         'value_number': value['value_number'],
-        'value_boolean': value['value_boolean'],
+        'value_boolean': value['value_boolean'] == null ? null : (value['value_boolean'] == true ? 1 : 0),
         'value_date': value['value_date'],
         'value_datetime': value['value_datetime'],
       }, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -505,7 +597,10 @@ class LocalRepository {
 
   Future<void> enqueue(String type, String entityId) async {
     final db = await _db;
-    final existing = await db.query('sync_operation', where: 'operation_type = ? AND entity_id = ? AND state IN (?, ?)', whereArgs: [type, entityId, 'PENDING', 'RUNNING'], limit: 1);
+    // ERROR is deduped too: egy hibára futott művelet még él (a backoff újra
+    // sorra veszi), mellé beszúrni egy másodikat azt jelentette, hogy ugyanazt
+    // a jegyzőkönyvet kétszer töltöttük fel — a második már „inspection closed".
+    final existing = await db.query('sync_operation', where: 'operation_type = ? AND entity_id = ? AND state IN (?, ?, ?)', whereArgs: [type, entityId, 'PENDING', 'RUNNING', 'ERROR'], limit: 1);
     if (existing.isNotEmpty) return;
     final now = DateTime.now().toUtc().toIso8601String();
     await db.insert('sync_operation', {
@@ -520,6 +615,12 @@ class LocalRepository {
     });
   }
 
+  /// Strictly in enqueue order. The backoff decision deliberately does NOT
+  /// live here as a filter: filtering a waiting operation out of the list lets
+  /// the next one overtake it, and this queue is an ordered log of one driver's
+  /// actions on the same leg (protocol upload, then leg start, then leg
+  /// complete). SyncService stops the drain at the first operation that is not
+  /// due yet instead.
   Future<List<SyncOperation>> pendingOperations() async {
     final db = await _db;
     final rows = await db.query('sync_operation', where: 'state IN (?, ?)', whereArgs: ['PENDING', 'ERROR'], orderBy: 'created_at');
@@ -554,6 +655,13 @@ class LocalRepository {
   Future<void> retryOperation(String id) async {
     final db = await _db;
     await db.update('sync_operation', {'state': 'PENDING', 'last_error': null, 'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ponytail: feltétel nélküli reset induláskor, mert a szerver idempotens. Ha ez valaha megváltozik, korlátozni kell időre.
+  Future<void> resetStuckRunningOperations() async {
+    final db = await _db;
+    await db.rawUpdate("UPDATE sync_operation SET state='PENDING', updated_at=? WHERE state='RUNNING'",
+        [DateTime.now().toUtc().toIso8601String()]);
   }
 
   Future<List<SyncOperation>> allOpenOperations() async {

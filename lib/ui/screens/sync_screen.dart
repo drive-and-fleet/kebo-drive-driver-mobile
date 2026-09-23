@@ -48,7 +48,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 Card(
                   child: ListTile(
                     leading: Icon(op.state == 'CONFLICT' ? Icons.warning_amber : Icons.schedule),
-                    title: Text('${op.operationType} • ${op.state}'),
+                    title: Text('${_operationLabel(op.operationType)} • ${_stateLabel(op.state)}'),
                     subtitle: Text('${op.lastError ?? 'Szinkronra vár'}\nPróbálkozás: ${op.attempts}'),
                     isThreeLine: true,
                     trailing: op.state == 'ERROR' || op.state == 'CONFLICT'
@@ -87,4 +87,20 @@ class _SyncScreenState extends State<SyncScreen> {
       ),
     );
   }
+
+  String _operationLabel(String value) => switch (value) {
+        'SYNC_INSPECTION' => 'Jegyzőkönyv feltöltése',
+        'START_LEG' => 'Fuvar indítása',
+        'COMPLETE_LEG' => 'Fuvar lezárása',
+        _ => value,
+      };
+
+  String _stateLabel(String value) => switch (value) {
+        'PENDING' => 'Szinkronra vár',
+        'RUNNING' => 'Folyamatban',
+        'ERROR' => 'Hiba, újra próbálja',
+        'CONFLICT' => 'Ütközés — kézi ellenőrzés kell',
+        'DONE' => 'Szinkronizálva',
+        _ => value,
+      };
 }

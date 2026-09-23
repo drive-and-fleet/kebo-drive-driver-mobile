@@ -153,6 +153,7 @@ class SyncOperation {
     required this.state,
     required this.attempts,
     required this.createdAt,
+    required this.updatedAt,
     this.lastError,
   });
 
@@ -163,6 +164,7 @@ class SyncOperation {
   final int attempts;
   final String? lastError;
   final DateTime createdAt;
+  final DateTime updatedAt;
 
   factory SyncOperation.fromMap(Map<String, dynamic> row) => SyncOperation(
         id: '${row['id']}',
@@ -172,5 +174,6 @@ class SyncOperation {
         attempts: row['attempts'] as int? ?? 0,
         lastError: row['last_error']?.toString(),
         createdAt: DateTime.parse('${row['created_at']}'),
+        updatedAt: DateTime.tryParse('${row['updated_at']}') ?? DateTime.parse('${row['created_at']}'),
       );
 }

@@ -4,31 +4,32 @@ Egyszerű, offline-first Flutter alkalmazás a flottakezelő / sofőrszolgálat 
 
 ## Fő funkciók
 
-- Google, Facebook, Apple és opcionális Firebase e-mail/jelszó login. Facebook iOS Limited Login nonce-kezeléssel is támogatott.
-- Firebase identity -> backend platform-JWT token exchange.
-- A backend továbbra is ellenőrzi a sofőr és sofőrszolgálati tagság aktív állapotát; a kliens nem jogosultsági forrás.
-- Saját kiosztott LEG-ek letöltése.
-- Rendszám alapú, sofőrszolgálatra szűrt szabad LEG keresés és self-assignment.
-- A LEG felvétele előtt letölti az űrlap-konfigurációt és korábbi jegyzőkönyv snapshotokat; sikeres felvétel után a helyszíni munka internet nélkül is folytatható.
+- **Alapértelmezett belépés: e-mail + jelszó**, natívan a Driver API-n (bcrypt), Firebase nélkül. A regisztráció során a sofőr kiválasztja a sofőrszolgálatát; a kapcsolat azonnal létrejön, de a sofőr `PENDING` marad, amíg a szolgálat ügyintézője jóvá nem hagyja (Törzsadatok → Sofőrök → „Kapcsolás a szolgálathoz” a management webről).
+- Google, Facebook, Apple és Firebase e-mail/jelszó login is megvan a kódban, de alapból **ki van kapcsolva** (`SOCIAL_LOGIN_ENABLED=false`) — ezekkel Firebase projekt kell, e nélkül az app nem indul. Lásd a „Social login (opcionális)” szakaszt.
+- A backend minden kérésnél ellenőrzi a sofőr és sofőrszolgálati tagság aktív állapotát; a kliens nem jogosultsági forrás, és a token élettartama emiatt biztonságosan hosszú lehet jelszavas munkamenetnél (lásd `DRIVER_ACCESS_TOKEN_TTL_SECONDS`).
+- Saját kiosztott fuvarok (LEG-ek) letöltése.
+- **Böngészhető szabad fuvarok lista** (nem csak rendszám alapú keresés): ha a sofőrszolgálatnál engedélyezett a sofőr önkiosztás, minden szabad, PLANNED, hozzá nem rendelt LEG megjelenik; a rendszám mező csak opcionális szűrő.
+- A fuvar felvétele előtt letölti az űrlap-konfigurációt és korábbi jegyzőkönyv snapshotokat; sikeres felvétel után a helyszíni munka internet nélkül is folytatható.
 - Offline átvételi és leadási jegyzőkönyv.
 - Dinamikus form: TEXT, NUMBER, BOOLEAN, DATE, DATETIME, SINGLE_SELECT, MULTI_SELECT. Új/eltérő formhoz nem kell app-kódot módosítani.
 - Kötelező formmezők és kötelező fotótípusok lokális ellenőrzése; a backend ugyanezt szerveroldalon is validálja.
 - Sérülések 0..N, sérülésenként 0..N fotó; általános fotók sérüléstől függetlenül.
 - Korábbi jegyzőkönyv másolása ugyanazon megrendelés/autó esetén. A kézi szignó nem másolódik.
 - Mobilon rajzolt kézi szignó.
-- LEG indítás és lezárás offline queue-val.
+- „Fuvar indítása” / „Fuvar lezárása”: egyetlen gomb nyitja meg a szükséges (átvételi/leadási) jegyzőkönyvet, és annak lezárása után automatikusan indítja/zárja a fuvart is — a sofőrnek nem kell tudnia, hogy ez a rendszerben két lépés.
 - Sofőr -> sofőr átadási kérés, kétoldalú szerveroldali jóváhagyással (online funkció).
-- Automatikus és kézi szinkron. 409 konfliktus nem íródik felül csendben; `CONFLICT` állapotban látható.
+- Automatikus (csatlakozás-változásra és 60 másodpercenként) és kézi szinkron, exponenciális backoff-fal a hibázó műveleteken. 409 konfliktus nem íródik felül csendben; `CONFLICT` állapotban látható.
 - SQLite lokális adattárolás, normalizált táblákkal; nincs általános JSON blob adatbázis.
+- „Menetrend” design rendszer (a management web admin felületének vizuális nyelve), kesztyűben/napfényben is olvasható, nagyobb betűmérettel.
 
 ## Mi működik offline?
 
-A self-assignment maga online művelet, mert tranzakciósan a szerveren kell eldőlni, hogy ki kapta meg a LEG-et. A `Felveszem` gomb csak akkor jelez sikert, ha:
+A self-assignment (fuvar felvétele) maga online művelet, mert tranzakciósan a szerveren kell eldőlni, hogy ki kapta meg a fuvart. A `Felveszem` gomb csak akkor jelez sikert, ha:
 
 1. az aktuális form-konfiguráció le lett töltve;
 2. a másoláshoz használható korábbi inspection snapshotok le lettek töltve;
-3. a backend sikeresen a sofőrhöz rendelte a LEG-et;
-4. a LEG munkacsomag lokálisan el lett mentve.
+3. a backend sikeresen a sofőrhöz rendelte a fuvart;
+4. a munkacsomag lokálisan el lett mentve.
 
 Ezután internet nélkül elvégezhető:
 
@@ -38,9 +39,9 @@ Ezután internet nélkül elvégezhető:
 - fotózás;
 - sérülés rögzítése;
 - kézi szignó;
-- LEG indítása;
+- fuvar indítása;
 - leadási jegyzőkönyv;
-- LEG lezárása.
+- fuvar lezárása.
 
 A lokális műveletek sorrendben kerülnek a `sync_operation` queue-ba. Hálózat visszatérésekor a kliens megpróbálja szinkronizálni őket. A `connectivity_plus` csak trigger: tényleges internetelérést mindig a HTTP kérés sikere határoz meg.
 
@@ -55,7 +56,8 @@ lib/
   models/               # API/lokális modellek
   services/             # work package, validáció, sync
   ui/screens/           # egyszerű képernyők
-  ui/widgets/           # dinamikus form mezők, LEG kártya
+  ui/widgets/           # dinamikus form mezők, fuvar kártya
+  ui/theme.dart         # "Menetrend" design tokenek és ThemeData
 config/                  # dev/prod dart-define példák
 tool/                    # android/ios scaffold bootstrap
 native-config/           # Google/Facebook/Apple natív setup
@@ -68,8 +70,7 @@ Nincs repository/service/interface rétegek egymásra halmozása. A `LocalReposi
 - Flutter >= 3.38 (aktuális stable ajánlott), Dart >= 3.12.
 - Android Studio/Android SDK Android buildhez.
 - Xcode + Apple Developer signing iOS buildhez.
-- Firebase projekt a Google/Facebook/Apple Authentication providerekkel.
-- futó Driver API (a mellékelt backend v3 tartalmazza a szükséges Firebase token exchange endpointot).
+- futó Driver API. Firebase projekt **csak akkor kell**, ha a social login be van kapcsolva (`SOCIAL_LOGIN_ENABLED=true`) — alapból nem szükséges.
 
 Ellenőrzés:
 
@@ -94,15 +95,15 @@ FLUTTER_ORG=hu.sajatceg ./tool/bootstrap_platforms.sh
 
 A script csak a hiányzó `android/` és `ios/` mappát hozza létre, a `lib/` és `pubspec.yaml` fájlokat nem írja felül.
 
-## 2. Firebase / social login
+## 2. Social login (opcionális)
 
-Olvasd el:
+Alapból nem kell semmit tenned itt — az app e-mail/jelszóval fut. Ha mégis szeretnéd a Google/Facebook/Apple bejelentkezést, olvasd el:
 
 ```text
 native-config/README.md
 ```
 
-A Google/Facebook/Apple providerhez a saját Firebase, Meta és Apple alkalmazásod azonosítói szükségesek. Ezeket nem lehet helyesen kitalálni vagy a forráskódba előre beégetni.
+és kapcsold be `config/dev.json`-ban: `"SOCIAL_LOGIN_ENABLED": "true"`, majd töltsd ki a Firebase/Google mezőket. A Google/Facebook/Apple providerhez a saját Firebase, Meta és Apple alkalmazásod azonosítói szükségesek; ezeket nem lehet helyesen kitalálni vagy a forráskódba előre beégetni.
 
 ## 3. Local konfiguráció
 
@@ -110,7 +111,7 @@ A Google/Facebook/Apple providerhez a saját Firebase, Meta és Apple alkalmazá
 cp config/dev.json.example config/dev.json
 ```
 
-Töltsd ki a Firebase adatokat.
+Alapból csak a `DRIVER_API_BASE_URL`-t kell ellenőrizni; a `SOCIAL_LOGIN_ENABLED` marad `"false"`, a Firebase mezőket üresen/placeholderként hagyhatod.
 
 Android emulator esetén a host gép `localhost` címe:
 
@@ -125,6 +126,25 @@ iOS Simulatoron jellemzően:
 ```
 
 Fizikai telefonon a géped hálózati IP-je vagy HTTPS fejlesztői endpoint szükséges.
+
+### Fontos: az objektumtár címe is a készülékről kell elérhető legyen
+
+A fotókat és szignókat az app **nem** az API-n keresztül tölti fel, hanem presigned URL-lel közvetlenül a MinIO-ra. Ennek a címét a Driver API `S3_PUBLIC_ENDPOINT` env-je adja, és ugyanazt a hoszt-aliast kell tartalmaznia, amit a `DRIVER_API_BASE_URL` használ:
+
+| Futtatás | `DRIVER_API_BASE_URL` | `S3_PUBLIC_ENDPOINT` (Driver API `.env.local`) |
+|---|---|---|
+| Android emulátor | `http://10.0.2.2:3002` | `http://10.0.2.2:9000` |
+| iOS szimulátor | `http://127.0.0.1:3002` | `http://127.0.0.1:9000` |
+| fizikai eszköz | `http://<LAN IP>:3002` | `http://<LAN IP>:9000` |
+
+Ha `S3_PUBLIC_ENDPOINT=http://localhost:9000` marad, a jegyzőkönyv szinkronizálása **végtelen ciklusban elbukik**, méghozzá nehezen észrevehetően: az emulátoron a `localhost` magát az emulátort jelenti, a feltöltés tehát sehova nem jut el. A driver-api logjában ilyenkor csak ennyi látszik, újra és újra:
+
+```text
+LOG [HTTP] PUT  /api/v1/driver/inspections/2/values 200
+LOG [HTTP] POST /api/v1/driver/inspections/2/uploads/presign 201
+```
+
+— a feltöltés maga sosem jelenik meg, mert nem az API-hoz megy. Az appban a Szinkron nézet ilyenkor a konkrét hosztot írja ki („A tárhely nem érhető el: localhost:9000”).
 
 ## 4. Dependency install
 
@@ -155,25 +175,41 @@ flutter build appbundle --release --dart-define-from-file=config/prod.json
 flutter build ipa --release --dart-define-from-file=config/prod.json
 ```
 
-## Backend v3 - social login
+## Backend — e-mail/jelszó (alapértelmezett)
 
-A Driver API-n szükséges env:
+A Driver API-n szükséges env (lásd `.env.example`):
 
 ```dotenv
-FIREBASE_PROJECT_ID=your-firebase-project
-FIREBASE_SERVICE_ACCOUNT_BASE64=<base64 encoded service-account JSON>
-PLATFORM_ACCESS_TOKEN_TTL_SECONDS=1800
 JWT_ISSUER=fleet-platform
 JWT_AUDIENCE=fleet-platform-clients
 JWT_SECRET=replace-in-production
 # vagy RS256 esetén:
 JWT_PRIVATE_KEY_BASE64=
 JWT_PUBLIC_KEY_BASE64=
+DRIVER_ACCESS_TOKEN_TTL_SECONDS=2592000
+```
+
+Végpontok:
+
+- `GET /api/v1/driver/service-organizations` — aktív sofőrszolgálatok, a regisztrációs dropdownhoz. Nem igényel bejelentkezést.
+- `POST /api/v1/driver/auth/register-password` — e-mail, jelszó, alapadatok és a választott `serviceOrgId`. Azonnal létrehoz egy `DRIVER_SERVICE_HISTORY` kapcsolatot a választott szolgálathoz, de a sofőr `PENDING` marad.
+- `POST /api/v1/driver/auth/login` — e-mail + jelszó, válaszul platform-JWT (csak `ACTIVE`/`ACTIVE` sofőrnek).
+
+A jóváhagyás a management weben történik: Törzsadatok → Sofőrök → a jelentkező sofőr (a választott szolgálatnál már látszik) → „Kapcsolás a szolgálathoz”. Ez egyszerre aktiválja a `USER` és a `DRIVER_PROFILE` rekordot.
+
+## Backend — social login (opcionális)
+
+Csak akkor kell, ha `SOCIAL_LOGIN_ENABLED=true` a mobilon:
+
+```dotenv
+FIREBASE_PROJECT_ID=your-firebase-project
+FIREBASE_SERVICE_ACCOUNT_BASE64=<base64 encoded service-account JSON>
+PLATFORM_ACCESS_TOKEN_TTL_SECONDS=1800
 ```
 
 A mobilappban Firebase service account / private key NINCS és nem is lehet.
 
-Új social user első belépésekor az app a `/api/v1/driver/auth/register` végponttal PENDING sofőrprofilt hoz létre. A system admin jóváhagyása után az `/auth/exchange` platform-JWT-t ad. A backend API-k ezt a platform-JWT-t validálják, nem a nyers Google/Facebook/Apple tokent.
+Új social user első belépésekor az app a `/api/v1/driver/auth/register` végponttal PENDING sofőrprofilt hoz létre — ez a régi út nem választ sofőrszolgálatot, a jóváhagyó ügyintéző utólag kapcsolja a szolgálathoz. A system admin/szolgálat admin jóváhagyása után az `/auth/exchange` platform-JWT-t ad. A backend API-k ezt a platform-JWT-t validálják, nem a nyers Google/Facebook/Apple tokent.
 
 ## Dinamikus űrlap
 
@@ -198,9 +234,8 @@ A konfiguráció SQLite cache-be kerül. Emiatt a szerveren új form vagy mező�
 
 ## Amit online kell tartani
 
-- első/social login és token exchange;
-- rendszám alapú szabad LEG keresés;
-- self-assignment;
+- regisztráció (a sofőrszolgálatok listájának betöltése) és minden bejelentkezés/token-csere;
+- szabad fuvarok listája és felvétele (self-assignment);
 - két sofőr közötti átadás/jóváhagyás;
 - első work package letöltés;
 - szinkron.

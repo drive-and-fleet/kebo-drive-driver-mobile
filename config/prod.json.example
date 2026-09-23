@@ -1,5 +1,6 @@
 {
   "DRIVER_API_BASE_URL": "https://api.example.com",
+  "SOCIAL_LOGIN_ENABLED": "false",
   "FIREBASE_PROJECT_ID": "your-firebase-project",
   "FIREBASE_API_KEY": "your-firebase-api-key",
   "FIREBASE_MESSAGING_SENDER_ID": "your-sender-id",

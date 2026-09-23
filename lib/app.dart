@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'services/app_services.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/login_screen.dart';
+import 'ui/theme.dart';
 
 class FleetDriverApp extends StatefulWidget {
   const FleetDriverApp({super.key, required this.services});
@@ -33,11 +34,7 @@ class _FleetDriverAppState extends State<FleetDriverApp> {
     return MaterialApp(
       title: 'Fleet Driver',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff1565c0)),
-        useMaterial3: true,
-        inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
-      ),
+      theme: buildAppTheme(),
       home: widget.services.auth.isSignedIn
           ? HomeScreen(services: widget.services)
           : LoginScreen(services: widget.services),

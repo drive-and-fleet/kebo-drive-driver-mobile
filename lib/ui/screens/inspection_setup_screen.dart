@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import 'inspection_editor_screen.dart';
@@ -17,7 +18,9 @@ class InspectionSetupScreen extends StatefulWidget {
 class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
   List<FormTypeConfig> _forms = const [];
   List<PreviousInspection> _previous = const [];
+  List<LocalInspectionDraft> _localPrevious = const [];
   String? _formId;
+  /// Szerveroldali forrás az azonosító, lokális forrás a 'local:' előtaggal.
   String? _copyId;
   bool _loading = true;
 
@@ -39,11 +42,17 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
       return;
     }
     final forms = await widget.services.work.formsFor(widget.leg);
-    final previous = await widget.services.local.previousInspections(widget.leg.legKey, widget.phase);
+    final previous = await widget.services.local.previousInspections(widget.leg.legKey);
+    // Offline is lehessen az átvételi jegyzőkönyvet másolni, akkor is, ha még nem szinkronizált.
+    final serverIds = previous.map((p) => p.serverId).toSet();
+    final localPrevious = (await widget.services.local.localInspectionsForCopy(widget.leg.legKey, 'PICKUP'))
+        .where((d) => d.serverId == null || !serverIds.contains(d.serverId))
+        .toList();
     if (mounted) {
       setState(() {
         _forms = forms;
         _previous = previous;
+        _localPrevious = widget.phase == 'DROPOFF' ? localPrevious : const [];
         _formId = forms.length == 1 ? forms.first.id : null;
         _loading = false;
       });
@@ -54,11 +63,14 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
     final formId = _formId;
     if (formId == null) return;
     final form = _forms.firstWhere((f) => f.id == formId);
+    final copy = _copyId;
+    final fromLocal = copy != null && copy.startsWith('local:');
     final draft = await widget.services.work.openInspection(
       leg: widget.leg,
       phase: widget.phase,
       formTypeId: form.id,
-      copyFromServerId: _copyId,
+      copyFromServerId: fromLocal ? null : copy,
+      copyFromLocalId: fromLocal ? copy.substring('local:'.length) : null,
     );
     if (!mounted) return;
     await Navigator.of(context).pushReplacement(MaterialPageRoute(
@@ -92,6 +104,11 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
                     ..._previous.map((p) => DropdownMenuItem<String>(
                       value: p.serverId,
                       child: Text('${p.completedAt?.toLocal().toString().substring(0, 16) ?? 'Korábbi'} • ${p.inspectionType}'),
+                    )),
+                    ..._localPrevious.map((d) => DropdownMenuItem<String>(
+                      value: 'local:${d.localId}',
+                      child: Text('${d.updatedAt.toLocal().toString().substring(0, 16)} • ${d.inspectionType}'
+                          '${d.status == 'SYNCED' ? '' : ' (még nem szinkronizált)'}'),
                     )),
                   ],
                   onChanged: (v) => setState(() => _copyId = (v == null || v.isEmpty) ? null : v),

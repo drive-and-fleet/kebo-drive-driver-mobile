@@ -16,11 +16,12 @@ class DriverApi {
     return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
-  Future<List<DriverLeg>> availableByPlate(String plate) async {
+  /// `plate` nélkül az összes felvehető fuvart adja vissza; a rendszám csak szűrő.
+  Future<List<DriverLeg>> availableLegs({String? plate}) async {
     final raw = await _http.get(
       '/api/v1/driver/available-legs',
       token: await _token(),
-      query: {'registrationNumber': plate},
+      query: {if (plate != null && plate.trim().isNotEmpty) 'registrationNumber': plate},
     ) as List<dynamic>;
     return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
@@ -94,11 +95,13 @@ class DriverApi {
     return '${raw['id']}';
   }
 
-  Future<Map<String, dynamic>> presign(String inspectionId, String objectName, String contentType) async {
+  /// [kind]: PHOTO | DAMAGE | SIGNATURE — ez dönti el az objektumtár almappáját.
+  Future<Map<String, dynamic>> presign(String inspectionId, String objectName, String contentType,
+      {String kind = 'PHOTO'}) async {
     return Map<String, dynamic>.from(await _http.post(
       '/api/v1/driver/inspections/$inspectionId/uploads/presign',
       token: await _token(),
-      body: {'objectName': objectName, 'contentType': contentType},
+      body: {'objectName': objectName, 'contentType': contentType, 'kind': kind},
     ) as Map);
   }
 

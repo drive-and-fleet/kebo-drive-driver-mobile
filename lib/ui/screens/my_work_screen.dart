@@ -10,13 +10,21 @@ class MyWorkScreen extends StatefulWidget {
   final AppServices services;
 
   @override
-  State<MyWorkScreen> createState() => _MyWorkScreenState();
+  State<MyWorkScreen> createState() => MyWorkScreenState();
 }
 
-class _MyWorkScreenState extends State<MyWorkScreen> {
+class MyWorkScreenState extends State<MyWorkScreen> {
+  /// A home_screen AppBar explicit frissítés gombja hívja — nem csak a
+  /// pull-to-refresh legyen az egyetlen (nem mindig nyilvánvaló) módja annak,
+  /// hogy a sofőr lekérdezze, jött-e új kiosztás.
+  Future<void> refresh() => _load(refresh: true);
   List<DriverLeg> _legs = const [];
   bool _loading = true;
+  bool _hideCompleted = true;
   String? _message;
+
+  List<DriverLeg> get _visibleLegs =>
+      _hideCompleted ? _legs.where((l) => l.status != 'COMPLETED').toList() : _legs;
 
   @override
   void initState() {
@@ -45,12 +53,17 @@ class _MyWorkScreenState extends State<MyWorkScreen> {
         children: [
           if (_loading) const LinearProgressIndicator(),
           if (_message != null) Padding(padding: const EdgeInsets.all(8), child: Text(_message!)),
-          if (!_loading && _legs.isEmpty)
+          SwitchListTile(
+            title: const Text('Csak folyamatban lévők'),
+            value: _hideCompleted,
+            onChanged: (v) => setState(() => _hideCompleted = v),
+          ),
+          if (!_loading && _visibleLegs.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 72, horizontal: 20),
               child: Column(children: [Icon(Icons.route_outlined, size: 64), SizedBox(height: 12), Text('Nincs letöltött vagy kiosztott fuvar.')]),
             ),
-          for (final leg in _legs)
+          for (final leg in _visibleLegs)
             LegCard(
               leg: leg,
               onTap: () async {

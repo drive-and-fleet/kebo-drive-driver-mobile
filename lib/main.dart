@@ -7,7 +7,11 @@ import 'services/app_services.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: AppConfig.firebaseOptions);
+  // A social bejelentkezés (Google/Facebook/Apple) ki van kapcsolva alapból;
+  // enélkül az app valódi Firebase projekt nélkül is elindul.
+  if (AppConfig.socialLoginEnabled) {
+    await Firebase.initializeApp(options: AppConfig.firebaseOptions);
+  }
   final services = await AppServices.create();
   runApp(FleetDriverApp(services: services));
 }

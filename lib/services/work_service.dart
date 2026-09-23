@@ -33,7 +33,8 @@ class WorkService {
     return local.cachedLegs();
   }
 
-  Future<List<DriverLeg>> searchByPlate(String plate) => api.availableByPlate(plate);
+  /// `plate` nélkül a szabad fuvarok teljes böngészhető listáját adja vissza.
+  Future<List<DriverLeg>> availableLegs({String? plate}) => api.availableLegs(plate: plate);
 
   Future<void> claimAndDownload(DriverLeg leg) async {
     // Download config and copy-source data first. A successful claim must leave the
@@ -55,12 +56,14 @@ class WorkService {
     required String phase,
     required String formTypeId,
     String? copyFromServerId,
+    String? copyFromLocalId,
   }) =>
       local.createOrResumeInspection(
         legKey: leg.legKey,
         formTypeId: formTypeId,
         phase: phase,
         copyFromServerId: copyFromServerId,
+        copyFromLocalId: copyFromLocalId,
       );
 
   Future<void> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form) async {
@@ -73,7 +76,7 @@ class WorkService {
   Future<void> startLeg(DriverLeg leg) async {
     final pickup = await local.inspectionForLeg(leg.legKey, 'PICKUP');
     if (pickup == null || !['COMPLETED_LOCAL', 'SYNCED'].contains(pickup.status)) {
-      throw StateError('A LEG indításához előbb zárd le az átvételi jegyzőkönyvet.');
+      throw StateError('A fuvar indításához előbb zárd le az átvételi jegyzőkönyvet.');
     }
     await local.updateLegStatus(leg.legKey, 'IN_PROGRESS');
     await local.enqueue('START_LEG', leg.legKey);
@@ -83,7 +86,7 @@ class WorkService {
   Future<void> completeLeg(DriverLeg leg) async {
     final dropoff = await local.inspectionForLeg(leg.legKey, 'DROPOFF');
     if (dropoff == null || !['COMPLETED_LOCAL', 'SYNCED'].contains(dropoff.status)) {
-      throw StateError('A LEG lezárásához előbb zárd le a leadási jegyzőkönyvet.');
+      throw StateError('A fuvar lezárásához előbb zárd le a leadási jegyzőkönyvet.');
     }
     await local.updateLegStatus(leg.legKey, 'COMPLETED_PENDING_SYNC');
     await local.enqueue('COMPLETE_LEG', leg.legKey);

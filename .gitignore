@@ -12,3 +12,4 @@ config/dev.json
 config/prod.json
 *.jks
 *.keystore
+/.idea

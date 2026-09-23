@@ -32,6 +32,15 @@ class DriverSession {
       };
 }
 
+class ServiceOrgOption {
+  const ServiceOrgOption({required this.id, required this.name});
+  final String id;
+  final String name;
+
+  factory ServiceOrgOption.fromJson(Map<String, dynamic> json) =>
+      ServiceOrgOption(id: '${json['id']}', name: '${json['name']}');
+}
+
 class DriverLeg {
   const DriverLeg({
     required this.legKey,
@@ -56,6 +65,7 @@ class DriverLeg {
     this.fromContactPhone,
     this.toContactName,
     this.toContactPhone,
+    this.legCount,
   });
 
   final String? legId;
@@ -81,6 +91,10 @@ class DriverLeg {
   final String? toContactName;
   final String? toContactPhone;
 
+  /// Hány szakasz tartozik ehhez a járműhöz az útvonalon. Csak a szabad fuvarok
+  /// listájában jön a szervertől, a lokális cache-ben nincs eltárolva.
+  final int? legCount;
+
   factory DriverLeg.fromJson(Map<String, dynamic> json) => DriverLeg(
         legId: json['legId']?.toString(),
         legKey: '${json['legKey']}',
@@ -104,6 +118,7 @@ class DriverLeg {
         fromContactPhone: json['fromContactPhone']?.toString(),
         toContactName: json['toContactName']?.toString(),
         toContactPhone: json['toContactPhone']?.toString(),
+        legCount: int.tryParse('${json['legCount'] ?? ''}'),
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -180,6 +195,7 @@ class DriverLeg {
         fromContactPhone: fromContactPhone,
         toContactName: toContactName,
         toContactPhone: toContactPhone,
+        legCount: legCount,
       );
 }
 

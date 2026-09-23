@@ -22,6 +22,13 @@ class DriverPendingException implements Exception {
   final String message;
 }
 
+/// A jelszavas token lejárt és nincs Firebase munkamenet, amivel meg lehetne
+/// újítani. A hívónak új bejelentkezésre van szüksége; ez soha nem szabad,
+/// hogy a helyi (offline) munkát megakassza.
+class SessionExpiredException implements Exception {
+  const SessionExpiredException();
+}
+
 class AuthService extends ChangeNotifier {
   AuthService(this._http, {FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
@@ -55,7 +62,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> _initGoogle() async {
-    if (_googleInitialized) return;
+    if (!AppConfig.socialLoginEnabled || _googleInitialized) return;
     await GoogleSignIn.instance.initialize(
       clientId: Platform.isIOS && AppConfig.googleIosClientId.isNotEmpty ? AppConfig.googleIosClientId : null,
       serverClientId: AppConfig.googleServerClientId.isNotEmpty ? AppConfig.googleServerClientId : null,
@@ -128,6 +135,51 @@ class AuthService extends ChangeNotifier {
     });
   }
 
+  /// Sofőrszolgálatok listája a regisztrációs dropdownhoz. Nem igényel bejelentkezést.
+  Future<List<ServiceOrgOption>> serviceOrganizations() async {
+    final raw = await _http.get('/api/v1/driver/service-organizations') as List<dynamic>;
+    return raw.map((e) => ServiceOrgOption.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  /// E-mail/jelszó regisztráció a választott sofőrszolgálathoz. A sofőr PENDING
+  /// marad, amíg a szolgálat ügyintézője jóvá nem hagyja.
+  Future<String> registerWithPassword({
+    required String email,
+    required String password,
+    required String firstName,
+    required String lastName,
+    required String serviceOrgId,
+    String? phone,
+    String? licenseNumber,
+  }) async {
+    final result = await _http.post('/api/v1/driver/auth/register-password', body: {
+      'email': email.trim(),
+      'password': password,
+      'firstName': firstName.trim(),
+      'lastName': lastName.trim(),
+      'serviceOrgId': serviceOrgId,
+      if (phone?.trim().isNotEmpty == true) 'phone': phone!.trim(),
+      if (licenseNumber?.trim().isNotEmpty == true) 'licenseNumber': licenseNumber!.trim(),
+    }) as Map<String, dynamic>;
+    return '${result['serviceOrgName']}';
+  }
+
+  /// E-mail/jelszó bejelentkezés a Driver API-val, Firebase nélkül.
+  Future<void> signInPassword(String email, String password) async {
+    await _run(() async {
+      try {
+        final result = await _http.post('/api/v1/driver/auth/login', body: {
+          'email': email.trim(),
+          'password': password,
+        }) as Map<String, dynamic>;
+        await _storeSession(result);
+      } on ApiException catch (e) {
+        if (e.statusCode == 403) throw DriverPendingException(e.message);
+        rethrow;
+      }
+    });
+  }
+
   Future<void> registerCurrentFirebaseUser({
     required String firstName,
     required String lastName,
@@ -148,15 +200,35 @@ class AuthService extends ChangeNotifier {
     );
   }
 
+  /// A helyi (offline) munka soha nem függhet a hálózattól, ezért ez csak akkor
+  /// dob, ha a tokent tényleg meg kell újítani és nincs mód rá — egy meglévő,
+  /// még érvényes tokent mindig visszaad, akár repülő üzemmódban is.
   Future<String> validPlatformToken() async {
     final token = _platformToken;
     if (token != null && !_isJwtExpiring(token, const Duration(minutes: 2))) return token;
-    await _exchangeFirebaseToken();
-    return _platformToken!;
+    if (AppConfig.socialLoginEnabled && FirebaseAuth.instance.currentUser != null) {
+      await _exchangeFirebaseToken();
+      return _platformToken!;
+    }
+    // Jelszavas munkamenetnek nincs Firebase tokenje, amivel meg lehetne
+    // újítani; a token élettartama emiatt hosszú (lásd DRIVER_ACCESS_TOKEN_TTL_SECONDS
+    // a szerveren). Ha mégis lejárt, csak új bejelentkezés segít.
+    if (token != null) return token;
+    throw const SessionExpiredException();
   }
 
   Future<void> refreshOnlineSession() async {
     await _exchangeFirebaseToken();
+  }
+
+  Future<void> _storeSession(Map<String, dynamic> result) async {
+    final accessToken = '${result['accessToken']}';
+    final driver = DriverSession.fromJson(Map<String, dynamic>.from(result['driver'] as Map));
+    _platformToken = accessToken;
+    _session = driver;
+    await _storage.write(key: _tokenKey, value: accessToken);
+    await _storage.write(key: _sessionKey, value: jsonEncode(driver.toJson()));
+    notifyListeners();
   }
 
   Future<void> _exchangeFirebaseToken() async {
@@ -165,13 +237,7 @@ class AuthService extends ChangeNotifier {
       final result = await _http.post('/api/v1/driver/auth/exchange', body: {
         'firebaseIdToken': firebaseToken,
       }) as Map<String, dynamic>;
-      final accessToken = '${result['accessToken']}';
-      final driver = DriverSession.fromJson(Map<String, dynamic>.from(result['driver'] as Map));
-      _platformToken = accessToken;
-      _session = driver;
-      await _storage.write(key: _tokenKey, value: accessToken);
-      await _storage.write(key: _sessionKey, value: jsonEncode(driver.toJson()));
-      notifyListeners();
+      await _storeSession(result);
     } on ApiException catch (e) {
       if (e.statusCode == 404) throw const DriverNotRegisteredException();
       if (e.statusCode == 403) throw DriverPendingException(e.message);
@@ -188,13 +254,17 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
-    await FirebaseAuth.instance.signOut();
-    try {
-      await GoogleSignIn.instance.signOut();
-    } catch (_) {}
-    try {
-      await FacebookAuth.instance.logOut();
-    } catch (_) {}
+    if (AppConfig.socialLoginEnabled) {
+      try {
+        await FirebaseAuth.instance.signOut();
+      } catch (_) {}
+      try {
+        await GoogleSignIn.instance.signOut();
+      } catch (_) {}
+      try {
+        await FacebookAuth.instance.logOut();
+      } catch (_) {}
+    }
     _platformToken = null;
     _session = null;
     await _storage.delete(key: _tokenKey);

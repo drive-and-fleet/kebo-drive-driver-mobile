@@ -14,7 +14,6 @@ dependencies:
   firebase_auth: 6.7.0
   google_sign_in: 7.2.0
   flutter_facebook_auth: 7.2.0
-  flutter_secure_storage: 11.2.0
   sqflite: 2.4.4
   path: 1.9.1
   path_provider: 2.1.6
@@ -24,6 +23,7 @@ dependencies:
   uuid: 4.6.0
   http: 1.6.0
   crypto: 3.0.7
+  flutter_secure_storage: ^10.3.4
 
 dev_dependencies:
   flutter_test:
@@ -32,3 +32,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # ponytail: nincs bundle-ölt betűtípus. A lib/ui/theme.dart 'Barlow' /
+  # 'BarlowCondensed' fontFamily névre hivatkozik; amíg itt nincs `fonts:`
+  # bejegyzés a .ttf fájlokhoz, Flutter csendben a rendszer betűtípusára esik
+  # vissza — a méret- és térközrendszer emiatt nem változik. Ha a fontok
+  # (Barlow, Barlow Condensed — Google Fonts, OFL licenc) bekerülnek
+  # assets/fonts/ alá, ide kell egy `fonts:` szekció, amely ugyanezt a két
+  # nevet regisztrálja.

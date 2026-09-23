@@ -41,14 +41,21 @@ class HttpApi {
   Future<dynamic> put(String path, {String? token, Object? body}) =>
       _send('PUT', _uri(path), token: token, body: body);
 
+  /// A fájlfeltöltés nem az API-ra megy, hanem presigned URL-lel közvetlenül az
+  /// objektumtárra — az pedig külön hoszt, külön porton. Ha csak az nem érhető
+  /// el (például mert a presigned URL "localhost"-ra mutat, ami a telefonon
+  /// saját magát jelenti), az nem ugyanaz, mint hogy nincs internet, ezért a
+  /// hibaüzenet megnevezi a hosztot.
   Future<void> putBytes(Uri uri, List<int> bytes, String contentType) async {
     try {
       final response = await _client.put(uri, headers: {'Content-Type': contentType}, body: bytes);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ApiException(response.statusCode, 'Fájl feltöltési hiba');
+        throw ApiException(response.statusCode, 'Fájl feltöltési hiba (HTTP ${response.statusCode})');
       }
     } on SocketException catch (e) {
-      throw ApiException(0, 'Nincs hálózati kapcsolat', body: e.message);
+      throw ApiException(0, 'A tárhely nem érhető el: ${uri.host}:${uri.port}', body: e.message);
+    } on http.ClientException catch (e) {
+      throw ApiException(0, 'A tárhely nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     }
   }
 
@@ -79,9 +86,9 @@ class HttpApi {
       }
       return decoded;
     } on SocketException catch (e) {
-      throw ApiException(0, 'Nincs hálózati kapcsolat', body: e.message);
+      throw ApiException(0, 'A szerver nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     } on http.ClientException catch (e) {
-      throw ApiException(0, 'A szerver nem érhető el', body: e.message);
+      throw ApiException(0, 'A szerver nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     }
   }
 }

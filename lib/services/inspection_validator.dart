@@ -19,9 +19,8 @@ class InspectionValidator {
     final errors = <String>[];
 
     final activeFields = form.fields.where((f) => f.phase == 'BOTH' || f.phase == draft.inspectionType).toList();
-    final mandatoryCodes = <String>{'FUEL_LEVEL', 'KEY_COUNT', 'REGISTRATION_CERTIFICATE', 'ODOMETER_KM'};
     for (final field in activeFields) {
-      if (!field.required && !mandatoryCodes.contains(field.code)) continue;
+      if (!field.required) continue;
       final value = values[field.fieldDefinitionId];
       if (!_hasValue(field, value)) errors.add('Hiányzó mező: ${field.name}');
     }

@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../auth/auth_service.dart';
+import '../../config/app_config.dart';
 import '../../services/app_services.dart';
+import '../theme.dart';
 import 'registration_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -46,6 +48,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final busy = widget.services.auth.busy;
     return Scaffold(
+      backgroundColor: AppColors.panel900,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -55,46 +58,85 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.directions_car_filled, size: 72),
+                  const Icon(Icons.local_shipping_outlined, size: 72, color: AppColors.panelInk),
                   const SizedBox(height: 16),
-                  Text('Fleet Driver', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
+                  const Text(
+                    'Drive and Fleet',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: AppText.screenTitle, fontWeight: FontWeight.w700, color: AppColors.panelInk),
+                  ),
                   const SizedBox(height: 8),
-                  const Text('Sofőr alkalmazás', textAlign: TextAlign.center),
-                  const SizedBox(height: 28),
-                  FilledButton.icon(
-                    onPressed: busy ? null : () => _login(widget.services.auth.signInGoogle),
-                    icon: const Icon(Icons.g_mobiledata),
-                    label: const Text('Belépés Google-fiókkal'),
+                  const Text('Sofőr alkalmazás', textAlign: TextAlign.center, style: TextStyle(color: AppColors.panelDim, fontSize: AppText.secondary)),
+                  const SizedBox(height: 32),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(color: AppColors.sheet000, border: Border.all(color: AppColors.rule)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextField(
+                          controller: _email,
+                          keyboardType: TextInputType.emailAddress,
+                          style: const TextStyle(fontSize: AppText.body),
+                          decoration: const InputDecoration(labelText: 'E-mail cím'),
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: _password,
+                          obscureText: true,
+                          style: const TextStyle(fontSize: AppText.body),
+                          decoration: const InputDecoration(labelText: 'Jelszó'),
+                          onSubmitted: (_) => _login(() => widget.services.auth.signInPassword(_email.text, _password.text)),
+                        ),
+                        const SizedBox(height: 18),
+                        FilledButton(
+                          onPressed: busy
+                              ? null
+                              : () => _login(() => widget.services.auth.signInPassword(_email.text, _password.text)),
+                          child: const Text('Belépés'),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton(
+                          onPressed: busy
+                              ? null
+                              : () => Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) => RegistrationScreen(services: widget.services),
+                                  )),
+                          child: const Text('Új sofőr vagyok, regisztrálok'),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                  FilledButton.tonalIcon(
-                    onPressed: busy ? null : () => _login(widget.services.auth.signInFacebook),
-                    icon: const Icon(Icons.facebook),
-                    label: const Text('Belépés Facebookkal'),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: busy ? null : () => _login(widget.services.auth.signInApple),
-                    icon: Icon(Platform.isIOS ? Icons.apple : Icons.login),
-                    label: const Text('Belépés Apple ID-val'),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 22),
-                    child: Row(children: [Expanded(child: Divider()), Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('vagy')), Expanded(child: Divider())]),
-                  ),
-                  TextField(controller: _email, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'E-mail')),
-                  const SizedBox(height: 12),
-                  TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Jelszó')),
-                  const SizedBox(height: 12),
-                  OutlinedButton(
-                    onPressed: busy
-                        ? null
-                        : () => _login(() => widget.services.auth.signInEmail(_email.text, _password.text)),
-                    child: const Text('Belépés e-maillel'),
-                  ),
+                  if (AppConfig.socialLoginEnabled) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 22),
+                      child: Row(children: [
+                        Expanded(child: Divider(color: AppColors.panel700)),
+                        Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('vagy', style: TextStyle(color: AppColors.panelDim))),
+                        Expanded(child: Divider(color: AppColors.panel700)),
+                      ]),
+                    ),
+                    FilledButton.icon(
+                      onPressed: busy ? null : () => _login(widget.services.auth.signInGoogle),
+                      icon: const Icon(Icons.g_mobiledata),
+                      label: const Text('Belépés Google-fiókkal'),
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton.tonalIcon(
+                      onPressed: busy ? null : () => _login(widget.services.auth.signInFacebook),
+                      icon: const Icon(Icons.facebook),
+                      label: const Text('Belépés Facebookkal'),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: busy ? null : () => _login(widget.services.auth.signInApple),
+                      icon: Icon(Platform.isIOS ? Icons.apple : Icons.login),
+                      label: const Text('Belépés Apple ID-val'),
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 16),
-                    Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.signalRed)),
                   ],
                   if (busy) const Padding(padding: EdgeInsets.only(top: 18), child: LinearProgressIndicator()),
                 ],

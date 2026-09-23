@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/app_services.dart';
+import '../theme.dart';
 import 'inspection_setup_screen.dart';
 import 'transfer_create_screen.dart';
 
@@ -42,12 +43,33 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     }
   }
 
-  Future<void> _inspection(String phase) async {
+  /// Egyetlen gomb minden állapothoz: megnyitja a szükséges jegyzőkönyvet, és
+  /// annak lezárása után automatikusan elindítja/lezárja a fuvart — a sofőrnek
+  /// nem kell tudnia, hogy ez a rendszerben két külön lépés.
+  Future<void> _startTrip() async {
     final leg = _leg!;
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: phase),
+      builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: 'PICKUP'),
     ));
-    await _load();
+    final pickup = await widget.services.local.inspectionForLeg(leg.legKey, 'PICKUP');
+    if (pickup != null && ['COMPLETED_LOCAL', 'SYNCED'].contains(pickup.status)) {
+      await _action(() => widget.services.work.startLeg(leg));
+    } else {
+      await _load();
+    }
+  }
+
+  Future<void> _finishTrip() async {
+    final leg = _leg!;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: 'DROPOFF'),
+    ));
+    final dropoff = await widget.services.local.inspectionForLeg(leg.legKey, 'DROPOFF');
+    if (dropoff != null && ['COMPLETED_LOCAL', 'SYNCED'].contains(dropoff.status)) {
+      await _action(() => widget.services.work.completeLeg(leg));
+    } else {
+      await _load();
+    }
   }
 
   @override
@@ -60,39 +82,24 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if (_busy) const LinearProgressIndicator(),
-                if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+                if (_busy) const Padding(padding: EdgeInsets.only(bottom: 12), child: LinearProgressIndicator()),
+                if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
                 _InfoCard(leg: leg),
-                const SizedBox(height: 12),
-                Text('Műveletek', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: _busy ? null : () => _inspection('PICKUP'),
-                  icon: const Icon(Icons.assignment_outlined),
-                  label: const Text('Átvételi jegyzőkönyv'),
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 16),
                 if (leg.status == 'ASSIGNED')
-                  FilledButton.tonalIcon(
-                    onPressed: _busy ? null : () => _action(() => widget.services.work.startLeg(leg)),
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('LEG indítása'),
-                  ),
-                if (leg.status == 'IN_PROGRESS') ...[
                   FilledButton.icon(
-                    onPressed: _busy ? null : () => _inspection('DROPOFF'),
-                    icon: const Icon(Icons.fact_check_outlined),
-                    label: const Text('Leadási jegyzőkönyv'),
+                    onPressed: _busy ? null : _startTrip,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Fuvar indítása'),
                   ),
-                  const SizedBox(height: 8),
-                  FilledButton.tonalIcon(
-                    onPressed: _busy ? null : () => _action(() => widget.services.work.completeLeg(leg)),
+                if (leg.status == 'IN_PROGRESS')
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _finishTrip,
                     icon: const Icon(Icons.done_all),
-                    label: const Text('LEG lezárása'),
+                    label: const Text('Fuvar lezárása'),
                   ),
-                ],
                 if (leg.status == 'ASSIGNED') ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   OutlinedButton.icon(
                     onPressed: _busy
                         ? null
@@ -103,8 +110,11 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                     label: const Text('Átadás másik sofőrnek'),
                   ),
                 ],
-                const SizedBox(height: 12),
-                const Text('Az offline műveletek a telefonon azonnal mentésre kerülnek. Internetkapcsolat esetén a Szinkron nézetből vagy automatikusan kerülnek a szerverre.'),
+                const SizedBox(height: 16),
+                const Text(
+                  'Az offline rögzített adatok azonnal mentésre kerülnek a telefonon. Internetkapcsolat esetén a Szinkron nézetből vagy automatikusan feltöltődnek a szerverre.',
+                  style: TextStyle(color: AppColors.ink600, fontSize: AppText.secondary),
+                ),
               ],
             ),
     );
@@ -121,15 +131,22 @@ class _InfoCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${leg.registrationNumber} ${[leg.make, leg.model].whereType<String>().join(' ')}', style: Theme.of(context).textTheme.titleLarge),
+          Row(children: [
+            Expanded(
+              child: Text(
+                '${leg.registrationNumber} ${[leg.make, leg.model].whereType<String>().join(' ')}',
+                style: const TextStyle(fontFamily: 'BarlowCondensed', fontSize: AppText.plate, fontWeight: FontWeight.w700),
+              ),
+            ),
+            StatusPlate(leg.status),
+          ]),
           const SizedBox(height: 6),
-          Text('Megrendelés: ${leg.orderNo} • LEG ${leg.sequenceNo}'),
-          Text('Státusz: ${leg.status}'),
+          Text('Fuvar: ${leg.orderNo} • Szakasz #${leg.sequenceNo}', style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
           const Divider(height: 24),
-          Text('Felvétel: ${leg.fromAddress}', style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text('Felvétel: ${leg.fromAddress}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: AppText.body)),
           if (leg.fromContactName != null) Text('Kapcsolat: ${leg.fromContactName} ${leg.fromContactPhone ?? ''}'),
           const SizedBox(height: 10),
-          Text('Leadás: ${leg.toAddress}', style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text('Leadás: ${leg.toAddress}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: AppText.body)),
           if (leg.toContactName != null) Text('Kapcsolat: ${leg.toContactName} ${leg.toContactPhone ?? ''}'),
           if (leg.vehicleUserName != null) ...[
             const Divider(height: 24),

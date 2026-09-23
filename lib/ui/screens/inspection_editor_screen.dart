@@ -9,6 +9,15 @@ import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../widgets/dynamic_field.dart';
 
+// ponytail: fix lista, DB-lookup csak ha szolgálatonként eltérő értékkészlet kell.
+const _damageLocations = [
+  'bal oldalon elől', 'bal első ajtón', 'bal hátsó ajtón', 'bal oldalon hátul',
+  'jobb oldalon elől', 'jobb első ajtón', 'jobb hátsó ajtón', 'jobb oldalon hátul',
+  'hátul', 'elől', 'tetőn',
+];
+const _damageTypes = ['kis karcolás', 'közepes karcolás', 'nagy karcolás', 'törés', 'horpadás'];
+const _damageSeverities = ['kicsi', 'közepes', 'nagy'];
+
 class InspectionEditorScreen extends StatefulWidget {
   const InspectionEditorScreen({super.key, required this.services, required this.leg, required this.draftId, required this.form});
   final AppServices services;
@@ -32,7 +41,23 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   @override
   void initState() {
     super.initState();
-    _reload();
+    _init();
+  }
+
+  /// A kapcsolók alapértéke `false`, de eddig csak akkor keletkezett soruk, ha a
+  /// sofőr hozzájuk nyúlt — így a „nem" válasz nem került fel a szerverre.
+  Future<void> _init() async {
+    final draft = await widget.services.local.inspection(widget.draftId);
+    if (draft != null) {
+      final values = await widget.services.local.inspectionValues(widget.draftId);
+      for (final field in widget.form.fields.where((f) =>
+          f.dataType == 'BOOLEAN' && (f.phase == 'BOTH' || f.phase == draft.inspectionType))) {
+        if (values.containsKey(field.fieldDefinitionId)) continue;
+        await widget.services.local
+            .saveInspectionValue(widget.draftId, field.fieldDefinitionId, {'value_boolean': false}, const []);
+      }
+    }
+    await _reload();
   }
 
   Future<void> _reload() async {
@@ -66,9 +91,9 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
 
   Future<void> _addDamage() async {
     final description = TextEditingController();
-    final location = TextEditingController();
-    final type = TextEditingController();
-    final severity = TextEditingController();
+    String? location;
+    String? type;
+    String? severity;
     bool preexisting = false;
     final ok = await showDialog<bool>(
       context: context,
@@ -77,11 +102,26 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
         content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(controller: description, decoration: const InputDecoration(labelText: 'Leírás *'), maxLines: 2),
           const SizedBox(height: 10),
-          TextField(controller: location, decoration: const InputDecoration(labelText: 'Helye az autón')),
+          DropdownButtonFormField<String>(
+            value: location,
+            decoration: const InputDecoration(labelText: 'Helye az autón'),
+            items: [for (final v in _damageLocations) DropdownMenuItem(value: v, child: Text(v))],
+            onChanged: (v) => setDialogState(() => location = v),
+          ),
           const SizedBox(height: 10),
-          TextField(controller: type, decoration: const InputDecoration(labelText: 'Sérülés típusa')),
+          DropdownButtonFormField<String>(
+            value: type,
+            decoration: const InputDecoration(labelText: 'Sérülés típusa'),
+            items: [for (final v in _damageTypes) DropdownMenuItem(value: v, child: Text(v))],
+            onChanged: (v) => setDialogState(() => type = v),
+          ),
           const SizedBox(height: 10),
-          TextField(controller: severity, decoration: const InputDecoration(labelText: 'Súlyosság')),
+          DropdownButtonFormField<String>(
+            value: severity,
+            decoration: const InputDecoration(labelText: 'Súlyosság'),
+            items: [for (final v in _damageSeverities) DropdownMenuItem(value: v, child: Text(v))],
+            onChanged: (v) => setDialogState(() => severity = v),
+          ),
           CheckboxListTile(contentPadding: EdgeInsets.zero, title: const Text('Korábban is meglévő sérülés'), value: preexisting, onChanged: (v) => setDialogState(() => preexisting = v ?? false)),
         ])),
         actions: [
@@ -94,14 +134,14 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       await widget.services.local.addDamage(
         inspectionLocalId: widget.draftId,
         description: description.text.trim(),
-        location: location.text.trim().isEmpty ? null : location.text.trim(),
-        damageType: type.text.trim().isEmpty ? null : type.text.trim(),
-        severity: severity.text.trim().isEmpty ? null : severity.text.trim(),
+        location: location,
+        damageType: type,
+        severity: severity,
         isPreexisting: preexisting,
       );
       await _reload();
     }
-    description.dispose(); location.dispose(); type.dispose(); severity.dispose();
+    description.dispose();
   }
 
   Future<void> _takeDamagePhoto(LocalDamage damage) async {
@@ -201,7 +241,6 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     subtitle: Text('Minimum: ${requirement.minCount} • Rögzítve: ${_photos.where((p) => p.damageLocalId == null && p.photoType == requirement.photoType).length}'),
                     trailing: IconButton(onPressed: () => _takeGeneralPhoto(requirement.photoType), icon: const Icon(Icons.add_a_photo)),
                   )),
-                Card(child: ListTile(leading: const Icon(Icons.add_photo_alternate_outlined), title: const Text('Egyéb általános fotó'), trailing: IconButton(onPressed: () => _takeGeneralPhoto('GENERAL'), icon: const Icon(Icons.add_a_photo)))),
                 if (_photos.where((p) => p.damageLocalId == null).isNotEmpty)
                   _PhotoStrip(photos: _photos.where((p) => p.damageLocalId == null).toList()),
                 const SizedBox(height: 16),
