@@ -20,8 +20,14 @@ class InspectionValidator {
 
     final activeFields = form.fields.where((f) => f.phase == 'BOTH' || f.phase == draft.inspectionType).toList();
     for (final field in activeFields) {
-      if (!field.required) continue;
       final value = values[field.fieldDefinitionId];
+      // A szerver csak pontos tizedes számot fogad el; a hibás érték lezárás
+      // után már nem javítható, és a feltöltést véglegesen elakasztaná.
+      if (field.dataType == 'NUMBER' && value != null && !isValidNumber(value['value_number'])) {
+        errors.add('Érvénytelen szám: ${field.name}');
+        continue;
+      }
+      if (!field.required) continue;
       if (!_hasValue(field, value)) errors.add('Hiányzó mező: ${field.name}');
     }
 
@@ -39,6 +45,12 @@ class InspectionValidator {
     }
 
     return InspectionValidationResult(errors);
+  }
+
+  /// Ugyanaz a szabály, mint a szerver `@IsNumberString` ellenőrzése.
+  static bool isValidNumber(Object? raw) {
+    final text = LocalRepository.normalizeNumber(raw);
+    return text != null && RegExp(r'^[+-]?([0-9]*[.])?[0-9]+$').hasMatch(text);
   }
 
   bool _hasValue(FormFieldConfig field, Map<String, dynamic>? value) {

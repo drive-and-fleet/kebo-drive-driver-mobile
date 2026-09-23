@@ -23,6 +23,8 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
   /// Szerveroldali forrás az azonosító, lokális forrás a 'local:' előtaggal.
   String? _copyId;
   bool _loading = true;
+  bool _opening = false;
+  String? _error;
 
   @override
   void initState() {
@@ -30,15 +32,31 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
     _load();
   }
 
+  /// Az Editor fölé nyílik, és amikor bezárul, ez a képernyő is — így a hívó
+  /// `push` future-je a teljes folyamat végén teljesül, nem az Editor
+  /// megnyitásakor (a `pushReplacement` azonnal teljesítette volna).
+  Future<void> _openEditor(String draftId, FormTypeConfig form) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => InspectionEditorScreen(services: widget.services, leg: widget.leg, draftId: draftId, form: form),
+    ));
+    if (mounted) Navigator.of(context).pop();
+  }
+
   Future<void> _load() async {
     final existing = await widget.services.local.inspectionForLeg(widget.leg.legKey, widget.phase);
     if (existing != null) {
+      // Piszkozat: folytatás. Lezárt: csak megtekintés (az Editor read-only).
       final forms = await widget.services.work.formsFor(widget.leg);
-      final form = forms.firstWhere((f) => f.id == existing.formTypeId);
+      final form = forms.where((f) => f.id == existing.formTypeId).firstOrNull;
       if (!mounted) return;
-      await Navigator.of(context).pushReplacement(MaterialPageRoute(
-        builder: (_) => InspectionEditorScreen(services: widget.services, leg: widget.leg, draftId: existing.localId, form: form),
-      ));
+      if (form == null) {
+        setState(() {
+          _loading = false;
+          _error = 'A jegyzőkönyv űrlapja nincs a készüléken. Frissítsd a munkalistát hálózat mellett.';
+        });
+        return;
+      }
+      await _openEditor(existing.localId, form);
       return;
     }
     final forms = await widget.services.work.formsFor(widget.leg);
@@ -61,21 +79,24 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
 
   Future<void> _continue() async {
     final formId = _formId;
-    if (formId == null) return;
-    final form = _forms.firstWhere((f) => f.id == formId);
-    final copy = _copyId;
-    final fromLocal = copy != null && copy.startsWith('local:');
-    final draft = await widget.services.work.openInspection(
-      leg: widget.leg,
-      phase: widget.phase,
-      formTypeId: form.id,
-      copyFromServerId: fromLocal ? null : copy,
-      copyFromLocalId: fromLocal ? copy.substring('local:'.length) : null,
-    );
-    if (!mounted) return;
-    await Navigator.of(context).pushReplacement(MaterialPageRoute(
-      builder: (_) => InspectionEditorScreen(services: widget.services, leg: widget.leg, draftId: draft.localId, form: form),
-    ));
+    if (formId == null || _opening) return;
+    setState(() { _opening = true; _error = null; });
+    try {
+      final form = _forms.firstWhere((f) => f.id == formId);
+      final copy = _copyId;
+      final fromLocal = copy != null && copy.startsWith('local:');
+      final draft = await widget.services.work.openInspection(
+        leg: widget.leg,
+        phase: widget.phase,
+        formTypeId: form.id,
+        copyFromServerId: fromLocal ? null : copy,
+        copyFromLocalId: fromLocal ? copy.substring('local:'.length) : null,
+      );
+      if (!mounted) return;
+      await _openEditor(draft.localId, form);
+    } catch (e) {
+      if (mounted) setState(() { _error = '$e'; _opening = false; });
+    }
   }
 
   @override
@@ -87,6 +108,8 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (_error != null)
+                  Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
                 Text('Rendszám: ${widget.leg.registrationNumber}', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
@@ -114,7 +137,7 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
                   onChanged: (v) => setState(() => _copyId = (v == null || v.isEmpty) ? null : v),
                 ),
                 const SizedBox(height: 20),
-                FilledButton(onPressed: _formId == null ? null : _continue, child: const Text('Jegyzőkönyv megnyitása')),
+                FilledButton(onPressed: _formId == null || _opening ? null : _continue, child: const Text('Jegyzőkönyv megnyitása')),
               ],
             ),
     );

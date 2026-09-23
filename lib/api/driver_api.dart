@@ -96,12 +96,18 @@ class DriverApi {
   }
 
   /// [kind]: PHOTO | DAMAGE | SIGNATURE — ez dönti el az objektumtár almappáját.
+  /// [storageKey]: retry-nál a korábban kiosztott kulcs, erre kér új URL-t.
   Future<Map<String, dynamic>> presign(String inspectionId, String objectName, String contentType,
-      {String kind = 'PHOTO'}) async {
+      {String kind = 'PHOTO', String? storageKey}) async {
     return Map<String, dynamic>.from(await _http.post(
       '/api/v1/driver/inspections/$inspectionId/uploads/presign',
       token: await _token(),
-      body: {'objectName': objectName, 'contentType': contentType, 'kind': kind},
+      body: {
+        'objectName': objectName,
+        'contentType': contentType,
+        'kind': kind,
+        if (storageKey != null) 'storageKey': storageKey,
+      },
     ) as Map);
   }
 

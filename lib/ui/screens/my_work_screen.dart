@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../widgets/leg_card.dart';
@@ -19,6 +20,7 @@ class MyWorkScreenState extends State<MyWorkScreen> {
   /// hogy a sofőr lekérdezze, jött-e új kiosztás.
   Future<void> refresh() => _load(refresh: true);
   List<DriverLeg> _legs = const [];
+  Map<String, LegSyncState> _syncStates = const {};
   bool _loading = true;
   bool _hideCompleted = true;
   String? _message;
@@ -29,14 +31,30 @@ class MyWorkScreenState extends State<MyWorkScreen> {
   @override
   void initState() {
     super.initState();
+    widget.services.sync.addListener(_refreshLocal);
     _load();
+  }
+
+  @override
+  void dispose() {
+    widget.services.sync.removeListener(_refreshLocal);
+    super.dispose();
+  }
+
+  /// A háttérszinkron változásai (státusz, feltöltési jelzés) hálózat nélkül,
+  /// a lokális adatbázisból.
+  Future<void> _refreshLocal() async {
+    final legs = await widget.services.local.cachedLegs();
+    final states = await widget.services.local.legSyncStates();
+    if (mounted) setState(() { _legs = legs; _syncStates = states; });
   }
 
   Future<void> _load({bool refresh = true}) async {
     setState(() => _loading = true);
     try {
       final legs = await widget.services.work.myWork(refreshOnline: refresh);
-      if (mounted) setState(() { _legs = legs; _message = null; });
+      final states = await widget.services.local.legSyncStates();
+      if (mounted) setState(() { _legs = legs; _syncStates = states; _message = null; });
     } catch (e) {
       if (mounted) setState(() => _message = '$e');
     } finally {
@@ -66,6 +84,7 @@ class MyWorkScreenState extends State<MyWorkScreen> {
           for (final leg in _visibleLegs)
             LegCard(
               leg: leg,
+              syncState: _syncStates[leg.legKey],
               onTap: () async {
                 await Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey),

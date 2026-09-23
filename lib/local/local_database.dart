@@ -12,9 +12,10 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
+      onUpgrade: _upgrade,
     );
     return _db!;
   }
@@ -151,6 +152,7 @@ class LocalDatabase {
         form_type_id TEXT NOT NULL,
         inspection_type TEXT NOT NULL,
         copy_from_server_id TEXT,
+        copy_from_local_id TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -221,6 +223,7 @@ class LocalDatabase {
         id TEXT PRIMARY KEY,
         operation_type TEXT NOT NULL,
         entity_id TEXT NOT NULL,
+        leg_key TEXT,
         state TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
@@ -232,6 +235,21 @@ class LocalDatabase {
     await db.execute('CREATE INDEX idx_cached_leg_service ON cached_leg(service_org_id, status)');
     await db.execute('CREATE INDEX idx_local_inspection_leg ON local_inspection(leg_key, inspection_type)');
     await db.execute('CREATE INDEX idx_sync_operation_state ON sync_operation(state, created_at)');
+  }
+
+  /// v2: a sync sor szakaszonként rendezett (leg_key), a lokális forrásból
+  /// másolt jegyzőkönyv a forrás szerveroldali példányából másol.
+  Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE sync_operation ADD COLUMN leg_key TEXT');
+      await db.execute('ALTER TABLE local_inspection ADD COLUMN copy_from_local_id TEXT');
+      await db.execute("UPDATE sync_operation SET leg_key = entity_id WHERE operation_type IN ('START_LEG','COMPLETE_LEG')");
+      await db.execute('''
+        UPDATE sync_operation
+           SET leg_key = (SELECT leg_key FROM local_inspection WHERE local_id = sync_operation.entity_id)
+         WHERE operation_type = 'SYNC_INSPECTION'
+      ''');
+    }
   }
 
   Future<void> close() async {

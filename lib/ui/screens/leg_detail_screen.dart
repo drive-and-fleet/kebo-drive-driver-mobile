@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
+import '../widgets/sync_badge.dart';
 import 'inspection_setup_screen.dart';
 import 'transfer_create_screen.dart';
 
@@ -17,57 +19,64 @@ class LegDetailScreen extends StatefulWidget {
 
 class _LegDetailScreenState extends State<LegDetailScreen> {
   DriverLeg? _leg;
+  LegSyncState? _syncState;
   bool _busy = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    // A háttérszinkron a szakasz státuszát és a sync jelzést is változtatja.
+    widget.services.sync.addListener(_refresh);
     _load();
   }
 
-  Future<void> _load() async {
-    final leg = await widget.services.local.cachedLeg(widget.legKey);
-    if (mounted) setState(() { _leg = leg; _busy = false; });
+  @override
+  void dispose() {
+    widget.services.sync.removeListener(_refresh);
+    super.dispose();
   }
 
-  Future<void> _action(Future<void> Function() action) async {
+  /// Háttérfrissítés: nem nyúl a folyamatban lévő művelet busy jelzéséhez.
+  void _refresh() => _load(quiet: true);
+
+  Future<void> _load({bool quiet = false}) async {
+    final leg = await widget.services.local.cachedLeg(widget.legKey);
+    final syncState = (await widget.services.local.legSyncStates())[widget.legKey];
+    if (!mounted) return;
+    setState(() {
+      _leg = leg;
+      _syncState = syncState;
+      if (!quiet) _busy = false;
+    });
+  }
+
+  /// Egyetlen gomb minden állapothoz: megnyitja a szükséges jegyzőkönyvet. A
+  /// fuvar indítását/lezárását maga a jegyzőkönyv lezárása végzi, egy lokális
+  /// tranzakcióban — itt a visszatérés után csak újraolvassuk az állapotot, az
+  /// üzleti lépés nem függ attól, hogyan zárult be a képernyő.
+  Future<void> _startTrip() => _openPhase('PICKUP', (leg) => widget.services.work.startLeg(leg));
+
+  Future<void> _finishTrip() => _openPhase('DROPOFF', (leg) => widget.services.work.completeLeg(leg));
+
+  Future<void> _openPhase(String phase, Future<void> Function(DriverLeg leg) transitionOnly) async {
+    final leg = _leg;
+    if (leg == null || _busy) return;
     setState(() { _busy = true; _error = null; });
     try {
-      await action();
-      await _load();
+      final existing = await widget.services.local.inspectionForLeg(leg.legKey, phase);
+      if (existing != null && existing.status != 'DRAFT') {
+        // A jegyzőkönyv már lezárt, csak az állapotváltás maradt el (korábbi
+        // appverzió): nem nyitjuk újra, csak a hiányzó lépést végezzük el.
+        await transitionOnly(leg);
+      } else if (mounted) {
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: phase),
+        ));
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  /// Egyetlen gomb minden állapothoz: megnyitja a szükséges jegyzőkönyvet, és
-  /// annak lezárása után automatikusan elindítja/lezárja a fuvart — a sofőrnek
-  /// nem kell tudnia, hogy ez a rendszerben két külön lépés.
-  Future<void> _startTrip() async {
-    final leg = _leg!;
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: 'PICKUP'),
-    ));
-    final pickup = await widget.services.local.inspectionForLeg(leg.legKey, 'PICKUP');
-    if (pickup != null && ['COMPLETED_LOCAL', 'SYNCED'].contains(pickup.status)) {
-      await _action(() => widget.services.work.startLeg(leg));
-    } else {
-      await _load();
-    }
-  }
-
-  Future<void> _finishTrip() async {
-    final leg = _leg!;
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: 'DROPOFF'),
-    ));
-    final dropoff = await widget.services.local.inspectionForLeg(leg.legKey, 'DROPOFF');
-    if (dropoff != null && ['COMPLETED_LOCAL', 'SYNCED'].contains(dropoff.status)) {
-      await _action(() => widget.services.work.completeLeg(leg));
-    } else {
       await _load();
     }
   }
@@ -85,6 +94,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                 if (_busy) const Padding(padding: EdgeInsets.only(bottom: 12), child: LinearProgressIndicator()),
                 if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
                 _InfoCard(leg: leg),
+                const SizedBox(height: 12),
+                SyncBadge(_syncState, detailed: true),
                 const SizedBox(height: 16),
                 if (leg.status == 'ASSIGNED')
                   FilledButton.icon(

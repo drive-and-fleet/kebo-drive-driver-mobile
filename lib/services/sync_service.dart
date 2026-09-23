@@ -19,6 +19,41 @@ bool syncOperationDue(SyncOperation operation, DateTime now) {
   return now.difference(operation.updatedAt) >= Duration(seconds: seconds);
 }
 
+/// A szerver stabil hibakóddal jelzi a lezárt jegyzőkönyvet; a régi szerver
+/// csak az üzenetet küldte.
+bool isInspectionClosed(ApiException e) {
+  if (e.statusCode != 409) return false;
+  final body = e.body;
+  if (body is Map && body['code'] == 'INSPECTION_CLOSED') return true;
+  return e.message.contains('inspection closed');
+}
+
+/// A saveValues payload: csak a jegyzőkönyv fázisába tartozó mezők (ha a form
+/// ismert), és üres értéket nem küld — mindkettőt véglegesen elutasítaná a
+/// szerver, és a teljes feltöltés elakadna.
+List<Map<String, dynamic>> inspectionValuesPayload(Map<String, Map<String, dynamic>> values, Set<String> phaseFieldIds) {
+  final result = <Map<String, dynamic>>[];
+  for (final entry in values.entries) {
+    if (phaseFieldIds.isNotEmpty && !phaseFieldIds.contains(entry.key)) continue;
+    final row = entry.value;
+    final optionIds = (row['option_ids'] as List? ?? const []).map((id) => '$id').toList();
+    final number = LocalRepository.normalizeNumber(row['value_number']);
+    final text = row['value_text'];
+    final item = <String, dynamic>{
+      'fieldDefinitionId': entry.key,
+      if (text != null && '$text'.isNotEmpty) 'valueText': text,
+      if (number != null) 'valueNumber': number,
+      if (row['value_boolean'] != null) 'valueBoolean': row['value_boolean'] == 1 || row['value_boolean'] == true,
+      if (row['value_date'] != null && '${row['value_date']}'.isNotEmpty) 'valueDate': row['value_date'],
+      if (row['value_datetime'] != null && '${row['value_datetime']}'.isNotEmpty) 'valueDatetime': row['value_datetime'],
+      if (optionIds.isNotEmpty) 'optionIds': optionIds,
+    };
+    if (item.length == 1) continue;
+    result.add(item);
+  }
+  return result;
+}
+
 class SyncService extends ChangeNotifier {
   SyncService(this.api, this.local);
   final DriverApi api;
@@ -82,13 +117,20 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _pass() async {
+    // A sorrend szakaszonként kötelező (jegyzőkönyv → indítás → jegyzőkönyv →
+    // lezárás): egy szakasz első el nem végzett művelete (ütközés, hiba vagy
+    // még le nem telt backoff) a szakasz összes későbbi műveletét visszatartja.
+    // Más szakaszok műveleteit viszont nem — azok függetlenek.
+    final blocked = <String>{};
     for (final operation in await local.pendingOperations()) {
-      // Ordered queue: stop at the first operation that is still backing off
-      // rather than skipping past it. A leg must not be reported as started
-      // on the server while the pickup protocol it depends on is still
-      // waiting to upload.
-      if (!_isDue(operation)) break;
+      final leg = operation.legKey ?? operation.entityId;
+      if (blocked.contains(leg)) continue;
+      if (operation.state == 'CONFLICT' || !_isDue(operation)) {
+        blocked.add(leg);
+        continue;
+      }
       await local.operationRunning(operation.id);
+      await refreshCount();
       try {
         switch (operation.operationType) {
           case 'START_LEG':
@@ -105,10 +147,14 @@ class SyncService extends ChangeNotifier {
         }
         await local.operationDone(operation.id);
       } on ApiException catch (e) {
+        blocked.add(leg);
         await local.operationError(operation.id, e.message, conflict: e.isConflict);
         if (e.statusCode == 0) break; // no network: keep the remaining queue untouched
       } catch (e) {
+        blocked.add(leg);
         await local.operationError(operation.id, e.toString());
+      } finally {
+        await refreshCount();
       }
     }
   }
@@ -124,15 +170,37 @@ class SyncService extends ChangeNotifier {
   bool _isDue(SyncOperation operation) => syncOperationDue(operation, DateTime.now().toUtc());
 
   Future<void> _syncInspection(String localId) async {
-    if ((await local.inspection(localId))?.status == 'SYNCED') return;
+    final draft = await local.inspection(localId);
+    if (draft == null) throw StateError('Hiányzó lokális jegyzőkönyv: $localId');
+    if (draft.status == 'SYNCED') return;
     try {
       await _uploadInspection(localId);
     } on ApiException catch (e) {
-      // A szerver már lezárta ezt a jegyzőkönyvet: nincs mit újrapróbálni,
-      // különben a sor a végtelenségig ismétli a "inspection closed" hibát.
-      if (!e.message.contains('inspection closed')) rethrow;
+      if (!isInspectionClosed(e)) rethrow;
+      // A szerveren már lezárt (pl. a lezárás válasza elveszett). Ez csak akkor
+      // jelenti, hogy minden fent van, ha a telefonon nem maradt feltöltetlen
+      // elem — különben ütközés, amit a sofőrnek látnia kell.
+      final left = await local.unsyncedItemCount(localId);
+      if (left > 0) {
+        throw ApiException(409, 'A jegyzőkönyv a szerveren már lezárt, de $left elem nem került fel.', body: e.body);
+      }
     }
     await local.markInspectionSynced(localId);
+  }
+
+  /// Lokális forrásból másolt jegyzőkönyv: a szerver a forrás szerveroldali
+  /// példányából másol. A forrás ugyanennek a szakasznak egy korábbi
+  /// jegyzőkönyve, így a szakaszonkénti sorrend miatt ekkorra már fent van.
+  Future<String?> _copySource(LocalInspectionDraft draft) async {
+    if (draft.copyFromServerId != null) return draft.copyFromServerId;
+    final sourceId = draft.copyFromLocalId;
+    if (sourceId == null) return null;
+    final source = await local.inspection(sourceId);
+    if (source == null) throw StateError('A másolás forrása nem található a készüléken.');
+    if (source.status != 'SYNCED' || source.serverId == null) {
+      throw StateError('A másolás forrása még nincs feltöltve a szerverre.');
+    }
+    return source.serverId;
   }
 
   Future<void> _uploadInspection(String localId) async {
@@ -146,25 +214,16 @@ class SyncService extends ChangeNotifier {
         formTypeId: draft.formTypeId,
         inspectionType: draft.inspectionType,
         deviceOperationId: draft.localId,
-        copyFromInspectionId: draft.copyFromServerId,
+        copyFromInspectionId: await _copySource(draft),
       );
       await local.markInspectionServerId(localId, serverId);
       draft = (await local.inspection(localId))!;
     }
 
-    final values = await local.inspectionValues(localId);
-    await api.saveValues(serverId, values.entries.map((entry) {
-      final row = entry.value;
-      return <String, dynamic>{
-        'fieldDefinitionId': entry.key,
-        if (row['value_text'] != null) 'valueText': row['value_text'],
-        if (row['value_number'] != null) 'valueNumber': '${row['value_number']}',
-        if (row['value_boolean'] != null) 'valueBoolean': row['value_boolean'] == 1 || row['value_boolean'] == true,
-        if (row['value_date'] != null) 'valueDate': row['value_date'],
-        if (row['value_datetime'] != null) 'valueDatetime': row['value_datetime'],
-        if ((row['option_ids'] as List? ?? const []).isNotEmpty) 'optionIds': row['option_ids'],
-      };
-    }).toList());
+    await api.saveValues(serverId, inspectionValuesPayload(
+      await local.inspectionValues(localId),
+      await local.phaseFieldIds(draft.formTypeId, draft.inspectionType),
+    ));
 
     var damages = await local.damages(localId);
     for (final damage in damages.where((d) => !d.baseline && d.serverId == null)) {
@@ -174,6 +233,7 @@ class SyncService extends ChangeNotifier {
         'description': damage.description,
         if (damage.severity != null) 'severity': damage.severity,
         if (damage.isPreexisting != null) 'isPreexisting': damage.isPreexisting,
+        'deviceOperationId': damage.localId,
       });
       await local.setDamageServerId(damage.localId, id);
     }
@@ -185,11 +245,14 @@ class SyncService extends ChangeNotifier {
       final file = File(photo.localPath!);
       if (!await file.exists()) throw StateError('Fotófájl nem található: ${photo.localPath}');
       final contentType = p.extension(file.path).toLowerCase() == '.png' ? 'image/png' : 'image/jpeg';
+      var storageKey = photo.storageKey;
       final presign = await api.presign(serverId, p.basename(file.path), contentType,
-          kind: photo.damageLocalId == null ? 'PHOTO' : 'DAMAGE');
-      final uploadUrl = '${presign['uploadUrl']}';
-      final storageKey = '${presign['storageKey']}';
-      await api.uploadToPresignedUrl(uploadUrl, file, contentType);
+          kind: photo.damageLocalId == null ? 'PHOTO' : 'DAMAGE', storageKey: storageKey);
+      if (storageKey == null) {
+        storageKey = '${presign['storageKey']}';
+        await local.reservePhotoKey(photo.localId, storageKey);
+      }
+      await api.uploadToPresignedUrl('${presign['uploadUrl']}', file, contentType);
       final damageId = photo.damageLocalId == null ? null : damageServerIds[photo.damageLocalId];
       final photoId = await api.addPhoto(serverId, {
         if (damageId != null) 'damageId': damageId,
@@ -203,8 +266,12 @@ class SyncService extends ChangeNotifier {
     for (final signature in (await local.signatures(localId)).where((s) => s.serverId == null)) {
       final file = File(signature.localPath);
       if (!await file.exists()) throw StateError('Aláírásfájl nem található');
-      final presign = await api.presign(serverId, p.basename(file.path), 'image/png', kind: 'SIGNATURE');
-      final storageKey = '${presign['storageKey']}';
+      var storageKey = signature.storageKey;
+      final presign = await api.presign(serverId, p.basename(file.path), 'image/png', kind: 'SIGNATURE', storageKey: storageKey);
+      if (storageKey == null) {
+        storageKey = '${presign['storageKey']}';
+        await local.reserveSignatureKey(signature.localId, storageKey);
+      }
       await api.uploadToPresignedUrl('${presign['uploadUrl']}', file, 'image/png');
       final signatureId = await api.addSignature(serverId, {
         'signerName': signature.signerName,

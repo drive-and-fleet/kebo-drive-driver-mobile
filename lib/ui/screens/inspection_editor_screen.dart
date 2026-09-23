@@ -38,6 +38,10 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   bool _loading = true;
   bool _finalizing = false;
 
+  /// Lezárt jegyzőkönyv csak megtekinthető: a tartalma már a sync sorban van,
+  /// utólagos változás sosem jutna fel a szerverre.
+  bool get _readOnly => _draft?.status != 'DRAFT' || _finalizing;
+
   @override
   void initState() {
     super.initState();
@@ -48,7 +52,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   /// sofőr hozzájuk nyúlt — így a „nem" válasz nem került fel a szerverre.
   Future<void> _init() async {
     final draft = await widget.services.local.inspection(widget.draftId);
-    if (draft != null) {
+    if (draft != null && draft.status == 'DRAFT') {
       final values = await widget.services.local.inspectionValues(widget.draftId);
       for (final field in widget.form.fields.where((f) =>
           f.dataType == 'BOOLEAN' && (f.phase == 'BOTH' || f.phase == draft.inspectionType))) {
@@ -76,17 +80,25 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     });
   }
 
-  Future<void> _saveValue(FormFieldConfig field, Map<String, dynamic> value, List<String> options) async {
-    await widget.services.local.saveInspectionValue(widget.draftId, field.fieldDefinitionId, value, options);
+  /// Minden lokális írás hibája látható — egy csendben elnyelt hiba azt
+  /// hitetné el, hogy az adat el van mentve.
+  Future<void> _guard(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nem sikerült menteni: $e')));
+    }
     await _reload();
   }
+
+  Future<void> _saveValue(FormFieldConfig field, Map<String, dynamic> value, List<String> options) =>
+      _guard(() => widget.services.local.saveInspectionValue(widget.draftId, field.fieldDefinitionId, value, options));
 
   Future<void> _takeGeneralPhoto(String type) async {
     final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2200);
     if (image == null) return;
     final path = await widget.services.fileStore.persistImage(image.path);
-    await widget.services.local.addPhoto(inspectionLocalId: widget.draftId, photoType: type, localPath: path);
-    await _reload();
+    await _guard(() => widget.services.local.addPhoto(inspectionLocalId: widget.draftId, photoType: type, localPath: path));
   }
 
   Future<void> _addDamage() async {
@@ -131,15 +143,15 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       )),
     );
     if (ok == true) {
-      await widget.services.local.addDamage(
-        inspectionLocalId: widget.draftId,
-        description: description.text.trim(),
-        location: location,
-        damageType: type,
-        severity: severity,
-        isPreexisting: preexisting,
-      );
-      await _reload();
+      final text = description.text.trim();
+      await _guard(() => widget.services.local.addDamage(
+            inspectionLocalId: widget.draftId,
+            description: text,
+            location: location,
+            damageType: type,
+            severity: severity,
+            isPreexisting: preexisting,
+          ));
     }
     description.dispose();
   }
@@ -148,13 +160,12 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2200);
     if (image == null) return;
     final path = await widget.services.fileStore.persistImage(image.path);
-    await widget.services.local.addPhoto(
-      inspectionLocalId: widget.draftId,
-      photoType: 'DAMAGE',
-      localPath: path,
-      damageLocalId: damage.localId,
-    );
-    await _reload();
+    await _guard(() => widget.services.local.addPhoto(
+          inspectionLocalId: widget.draftId,
+          photoType: 'DAMAGE',
+          localPath: path,
+          damageLocalId: damage.localId,
+        ));
   }
 
   Future<void> _addSignature() async {
@@ -180,13 +191,13 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       final bytes = await controller.toPngBytes();
       if (bytes != null) {
         final path = await widget.services.fileStore.persistBytes(bytes);
-        await widget.services.local.addSignature(
-          inspectionLocalId: widget.draftId,
-          signerName: name.text.trim(),
-          signerRole: _draft?.inspectionType == 'PICKUP' ? 'HANDOVER' : 'RECEIVER',
-          localPath: path,
-        );
-        await _reload();
+        final signerName = name.text.trim();
+        await _guard(() => widget.services.local.addSignature(
+              inspectionLocalId: widget.draftId,
+              signerName: signerName,
+              signerRole: _draft?.inspectionType == 'PICKUP' ? 'HANDOVER' : 'RECEIVER',
+              localPath: path,
+            ));
       }
     }
     name.dispose(); controller.dispose();
@@ -197,17 +208,24 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     if (draft == null) return;
     setState(() => _finalizing = true);
     try {
-      await widget.services.work.finalizeInspection(draft, widget.form);
+      final legStatus = await widget.services.work.finalizeInspection(draft, widget.form);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Jegyzőkönyv lezárva. Offline esetben később szinkronizálódik.')));
+      final what = switch (legStatus) {
+        'IN_PROGRESS' when draft.inspectionType == 'PICKUP' => 'Jegyzőkönyv lezárva, a fuvar elindult.',
+        'COMPLETED_PENDING_SYNC' => 'Jegyzőkönyv lezárva, a fuvar lezárva.',
+        _ => 'Jegyzőkönyv lezárva.',
+      };
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$what Helyben mentve, a feltöltés a háttérben fut.'),
+      ));
+      // Sikeres lezárás után a képernyő zárva marad, amíg el nem tűnik.
       Navigator.pop(context);
     } catch (e) {
+      if (mounted) setState(() => _finalizing = false);
       if (mounted) await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(title: const Text('A jegyzőkönyv még nem zárható le'), content: Text('$e'), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]),
       );
-    } finally {
-      if (mounted) setState(() => _finalizing = false);
     }
   }
 
@@ -224,13 +242,15 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 Card(child: ListTile(leading: const Icon(Icons.directions_car), title: Text(widget.leg.registrationNumber), subtitle: Text('${widget.leg.make ?? ''} ${widget.leg.model ?? ''}\n${widget.form.name}'))),
-                if (_draft?.copyFromServerId != null)
+                if (_draft != null && _draft!.status != 'DRAFT')
+                  const Card(child: ListTile(leading: Icon(Icons.lock_outline), title: Text('Lezárt jegyzőkönyv'), subtitle: Text('Csak megtekinthető. A feltöltés állapotát a fuvar adatlapja mutatja.'))),
+                if (_draft?.copyFromServerId != null || _draft?.copyFromLocalId != null)
                   const Card(child: ListTile(leading: Icon(Icons.copy_all), title: Text('Korábbi jegyzőkönyvből előtöltve'), subtitle: Text('Ellenőrizd az adatokat. Az aláírás nem lett átmásolva.'))),
                 const SizedBox(height: 12),
                 Text('Adatok', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
                 for (final field in fields)
-                  DynamicField(field: field, value: _values[field.fieldDefinitionId], onChanged: (value, options) => _saveValue(field, value, options)),
+                  DynamicField(field: field, value: _values[field.fieldDefinitionId], enabled: !_readOnly, onChanged: (value, options) => _saveValue(field, value, options)),
                 const SizedBox(height: 16),
                 Text('Fotók', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 6),
@@ -239,14 +259,14 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     leading: const Icon(Icons.photo_camera_outlined),
                     title: Text('${requirement.photoType}${requirement.required ? ' *' : ''}'),
                     subtitle: Text('Minimum: ${requirement.minCount} • Rögzítve: ${_photos.where((p) => p.damageLocalId == null && p.photoType == requirement.photoType).length}'),
-                    trailing: IconButton(onPressed: () => _takeGeneralPhoto(requirement.photoType), icon: const Icon(Icons.add_a_photo)),
+                    trailing: IconButton(onPressed: _readOnly ? null : () => _takeGeneralPhoto(requirement.photoType), icon: const Icon(Icons.add_a_photo)),
                   )),
                 if (_photos.where((p) => p.damageLocalId == null).isNotEmpty)
                   _PhotoStrip(photos: _photos.where((p) => p.damageLocalId == null).toList()),
                 const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Sérülések', style: Theme.of(context).textTheme.titleLarge),
-                  FilledButton.tonalIcon(onPressed: _addDamage, icon: const Icon(Icons.add), label: const Text('Sérülés')),
+                  FilledButton.tonalIcon(onPressed: _readOnly ? null : _addDamage, icon: const Icon(Icons.add), label: const Text('Sérülés')),
                 ]),
                 const SizedBox(height: 6),
                 if (_damages.isEmpty) const Text('Nincs rögzített sérülés.'),
@@ -261,19 +281,24 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                         if (damage.severity != null) Text('Súlyosság: ${damage.severity}'),
                         const SizedBox(height: 8),
                         _PhotoStrip(photos: _photos.where((p) => p.damageLocalId == damage.localId).toList()),
-                        Align(alignment: Alignment.centerRight, child: FilledButton.tonalIcon(onPressed: () => _takeDamagePhoto(damage), icon: const Icon(Icons.add_a_photo), label: const Text('Sérülés fotó'))),
+                        // A másolt sérülést és fotóit a szerver másolja; a mobil nem
+                        // ismeri a másolat azonosítóját, így új fotó nem köthető hozzá.
+                        if (!damage.baseline)
+                          Align(alignment: Alignment.centerRight, child: FilledButton.tonalIcon(onPressed: _readOnly ? null : () => _takeDamagePhoto(damage), icon: const Icon(Icons.add_a_photo), label: const Text('Sérülés fotó'))),
                       ]),
                     ),
                   ),
                 const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Kézi szignó', style: Theme.of(context).textTheme.titleLarge),
-                  FilledButton.tonalIcon(onPressed: _addSignature, icon: const Icon(Icons.draw), label: const Text('Szignó')),
+                  FilledButton.tonalIcon(onPressed: _readOnly ? null : _addSignature, icon: const Icon(Icons.draw), label: const Text('Szignó')),
                 ]),
                 for (final signature in _signatures) ListTile(leading: const Icon(Icons.draw), title: Text(signature.signerName), subtitle: Text(signature.signedAt.toLocal().toString().substring(0, 16))),
                 const SizedBox(height: 24),
-                FilledButton.icon(onPressed: _finalizing ? null : _finalize, icon: const Icon(Icons.check), label: const Text('Jegyzőkönyv lezárása')),
-                if (_finalizing) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
+                if (_draft?.status == 'DRAFT') ...[
+                  FilledButton.icon(onPressed: _finalizing ? null : _finalize, icon: const Icon(Icons.check), label: const Text('Jegyzőkönyv lezárása')),
+                  if (_finalizing) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
+                ],
               ],
             ),
     );

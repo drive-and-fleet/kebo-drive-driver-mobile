@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -21,6 +22,11 @@ class HttpApi {
 
   final String baseUrl;
   final http.Client _client;
+
+  /// Időkorlát nélkül egy félig nyitott mobilkapcsolat örökre megállítaná a
+  /// szinkront. Az időtúllépés hálózati hibának számít (statusCode 0).
+  static const requestTimeout = Duration(seconds: 30);
+  static const uploadTimeout = Duration(minutes: 2);
 
   Uri _uri(String path, [Map<String, String?> query = const {}]) {
     final cleanBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
@@ -48,10 +54,12 @@ class HttpApi {
   /// hibaüzenet megnevezi a hosztot.
   Future<void> putBytes(Uri uri, List<int> bytes, String contentType) async {
     try {
-      final response = await _client.put(uri, headers: {'Content-Type': contentType}, body: bytes);
+      final response = await _client.put(uri, headers: {'Content-Type': contentType}, body: bytes).timeout(uploadTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(response.statusCode, 'Fájl feltöltési hiba (HTTP ${response.statusCode})');
       }
+    } on TimeoutException {
+      throw ApiException(0, 'A tárhely nem válaszolt időben: ${uri.host}:${uri.port}');
     } on SocketException catch (e) {
       throw ApiException(0, 'A tárhely nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     } on http.ClientException catch (e) {
@@ -68,8 +76,8 @@ class HttpApi {
         request.headers['Content-Type'] = 'application/json; charset=utf-8';
         request.body = jsonEncode(body);
       }
-      final streamed = await _client.send(request);
-      final response = await http.Response.fromStream(streamed);
+      final streamed = await _client.send(request).timeout(requestTimeout);
+      final response = await http.Response.fromStream(streamed).timeout(requestTimeout);
       dynamic decoded;
       if (response.body.isNotEmpty) {
         try {
@@ -85,6 +93,8 @@ class HttpApi {
         throw ApiException(response.statusCode, message, body: decoded);
       }
       return decoded;
+    } on TimeoutException {
+      throw ApiException(0, 'A szerver nem válaszolt időben: ${uri.host}:${uri.port}');
     } on SocketException catch (e) {
       throw ApiException(0, 'A szerver nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     } on http.ClientException catch (e) {

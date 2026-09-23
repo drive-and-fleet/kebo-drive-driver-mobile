@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../api/driver_api.dart';
 import '../local/local_repository.dart';
 import '../models/local_models.dart';
@@ -66,30 +68,27 @@ class WorkService {
         copyFromLocalId: copyFromLocalId,
       );
 
-  Future<void> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form) async {
+  /// Local-first: a lezárás és az ebből következő fuvar-indítás/-lezárás egy
+  /// lokális tranzakció, a hálózat nincs a kritikus úton. A szinkron a
+  /// háttérben indul; az állapotát a SyncService jelzi a felületnek.
+  /// Visszaadja a szakasz új lokális státuszát.
+  Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form) async {
     final result = await InspectionValidator(local).validate(draft, form);
     if (!result.valid) throw StateError(result.errors.join('\n'));
-    await local.markInspectionLocalComplete(draft.localId);
-    await sync.run();
+    final status = await local.completeInspectionAndTransition(draft.localId);
+    unawaited(sync.run());
+    return status;
   }
 
+  /// Csak akkor kell, ha az átvételi jegyzőkönyv már lezárt, de a fuvar még
+  /// nem indult el (egy korábbi appverzió után maradt állapot).
   Future<void> startLeg(DriverLeg leg) async {
-    final pickup = await local.inspectionForLeg(leg.legKey, 'PICKUP');
-    if (pickup == null || !['COMPLETED_LOCAL', 'SYNCED'].contains(pickup.status)) {
-      throw StateError('A fuvar indításához előbb zárd le az átvételi jegyzőkönyvet.');
-    }
-    await local.updateLegStatus(leg.legKey, 'IN_PROGRESS');
-    await local.enqueue('START_LEG', leg.legKey);
-    await sync.run();
+    await local.transitionLegAfterInspection(leg.legKey, 'PICKUP');
+    unawaited(sync.run());
   }
 
   Future<void> completeLeg(DriverLeg leg) async {
-    final dropoff = await local.inspectionForLeg(leg.legKey, 'DROPOFF');
-    if (dropoff == null || !['COMPLETED_LOCAL', 'SYNCED'].contains(dropoff.status)) {
-      throw StateError('A fuvar lezárásához előbb zárd le a leadási jegyzőkönyvet.');
-    }
-    await local.updateLegStatus(leg.legKey, 'COMPLETED_PENDING_SYNC');
-    await local.enqueue('COMPLETE_LEG', leg.legKey);
-    await sync.run();
+    await local.transitionLegAfterInspection(leg.legKey, 'DROPOFF');
+    unawaited(sync.run());
   }
 }

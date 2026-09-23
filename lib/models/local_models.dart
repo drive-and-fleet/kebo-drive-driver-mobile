@@ -9,6 +9,7 @@ class LocalInspectionDraft {
     required this.updatedAt,
     this.serverId,
     this.copyFromServerId,
+    this.copyFromLocalId,
   });
 
   final String localId;
@@ -17,6 +18,8 @@ class LocalInspectionDraft {
   final String formTypeId;
   final String inspectionType;
   final String? copyFromServerId;
+  /// Lokális forrás: a feltöltéskor ennek a szerveroldali példányából másol a szerver.
+  final String? copyFromLocalId;
   final String status;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -28,6 +31,7 @@ class LocalInspectionDraft {
         formTypeId: '${row['form_type_id']}',
         inspectionType: '${row['inspection_type']}',
         copyFromServerId: row['copy_from_server_id']?.toString(),
+        copyFromLocalId: row['copy_from_local_id']?.toString(),
         status: '${row['status']}',
         createdAt: DateTime.parse('${row['created_at']}'),
         updatedAt: DateTime.parse('${row['updated_at']}'),
@@ -150,6 +154,7 @@ class SyncOperation {
     required this.id,
     required this.operationType,
     required this.entityId,
+    this.legKey,
     required this.state,
     required this.attempts,
     required this.createdAt,
@@ -160,6 +165,8 @@ class SyncOperation {
   final String id;
   final String operationType;
   final String entityId;
+  /// A szakasz, amelyhez a művelet tartozik — a sorrendiség ezen belül kötelező.
+  final String? legKey;
   final String state;
   final int attempts;
   final String? lastError;
@@ -170,6 +177,7 @@ class SyncOperation {
         id: '${row['id']}',
         operationType: '${row['operation_type']}',
         entityId: '${row['entity_id']}',
+        legKey: row['leg_key']?.toString(),
         state: '${row['state']}',
         attempts: row['attempts'] as int? ?? 0,
         lastError: row['last_error']?.toString(),
@@ -177,3 +185,6 @@ class SyncOperation {
         updatedAt: DateTime.tryParse('${row['updated_at']}') ?? DateTime.parse('${row['created_at']}'),
       );
 }
+
+/// Egy szakasz szinkronállapota a sofőrnek: mi van még csak a telefonon.
+enum LegSyncState { synced, pending, running, error, conflict }

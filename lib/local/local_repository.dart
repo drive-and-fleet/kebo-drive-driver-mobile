@@ -289,6 +289,9 @@ class LocalRepository {
     return rows.map(LocalInspectionDraft.fromMap).toList();
   }
 
+  /// Csak DRAFT-ot folytat: a lezárt jegyzőkönyv nem nyílik újra szerkesztésre.
+  /// A keresés és a beszúrás egy tranzakcióban fut, így dupla érintés sem hoz
+  /// létre két piszkozatot ugyanarra a szakaszra és fázisra.
   Future<LocalInspectionDraft> createOrResumeInspection({
     required String legKey,
     required String formTypeId,
@@ -297,41 +300,57 @@ class LocalRepository {
     String? copyFromLocalId,
   }) async {
     final db = await _db;
-    final existing = await db.query(
-      'local_inspection',
-      where: 'leg_key = ? AND inspection_type = ? AND status IN (?, ?)',
-      whereArgs: [legKey, phase, 'DRAFT', 'COMPLETED_LOCAL'],
-      orderBy: 'created_at DESC',
-      limit: 1,
-    );
-    if (existing.isNotEmpty) return LocalInspectionDraft.fromMap(existing.first);
+    final localId = await db.transaction((txn) async {
+      final existing = await txn.query(
+        'local_inspection',
+        columns: ['local_id', 'status'],
+        where: 'leg_key = ? AND inspection_type = ?',
+        whereArgs: [legKey, phase],
+        orderBy: 'created_at DESC',
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        if (existing.first['status'] == 'DRAFT') return '${existing.first['local_id']}';
+        throw StateError('Ehhez a szakaszhoz már van lezárt ${phase == 'PICKUP' ? 'átvételi' : 'leadási'} jegyzőkönyv.');
+      }
 
-    final now = DateTime.now().toUtc().toIso8601String();
-    final localId = _uuid.v4();
-    await db.transaction((txn) async {
+      final now = DateTime.now().toUtc().toIso8601String();
+      final id = _uuid.v4();
       await txn.insert('local_inspection', {
-        'local_id': localId,
+        'local_id': id,
         'server_id': null,
         'leg_key': legKey,
         'form_type_id': formTypeId,
         'inspection_type': phase,
         'copy_from_server_id': copyFromServerId,
+        'copy_from_local_id': copyFromServerId == null ? copyFromLocalId : null,
         'status': 'DRAFT',
         'created_at': now,
         'updated_at': now,
       });
       if (copyFromServerId != null) {
-        await _copyBaseline(txn, localId, formTypeId, copyFromServerId);
+        await _copyBaseline(txn, id, formTypeId, phase, copyFromServerId);
       } else if (copyFromLocalId != null) {
-        await _copyFromLocal(txn, localId, formTypeId, copyFromLocalId);
+        await _copyFromLocal(txn, id, formTypeId, phase, copyFromLocalId);
       }
+      return id;
     });
     return (await inspection(localId))!;
   }
 
-  Future<void> _copyBaseline(Transaction txn, String localId, String formTypeId, String sourceId) async {
-    final allowedFields = await txn.query('cached_form_field', columns: ['field_definition_id'], where: 'form_type_id = ?', whereArgs: [formTypeId]);
-    final allowed = allowedFields.map((row) => '${row['field_definition_id']}').toSet();
+  /// A cél fázisába tartozó mezők — a szerver a többit elutasítja.
+  Future<Set<String>> _phaseFieldIds(DatabaseExecutor db, String formTypeId, String phase) async {
+    final rows = await db.query('cached_form_field',
+        columns: ['field_definition_id'],
+        where: "form_type_id = ? AND phase IN ('BOTH', ?)",
+        whereArgs: [formTypeId, phase]);
+    return rows.map((row) => '${row['field_definition_id']}').toSet();
+  }
+
+  Future<Set<String>> phaseFieldIds(String formTypeId, String phase) async => _phaseFieldIds(await _db, formTypeId, phase);
+
+  Future<void> _copyBaseline(Transaction txn, String localId, String formTypeId, String phase, String sourceId) async {
+    final allowed = await _phaseFieldIds(txn, formTypeId, phase);
     final sourceValues = await txn.query('previous_value', where: 'inspection_server_id = ?', whereArgs: [sourceId]);
     for (final value in sourceValues) {
       final fieldId = '${value['field_definition_id']}';
@@ -341,7 +360,8 @@ class LocalRepository {
         'field_definition_id': fieldId,
         'value_text': value['value_text'],
         'value_number': value['value_number'],
-        'value_boolean': value['value_boolean'] == null ? null : (value['value_boolean'] == true ? 1 : 0),
+        // A previous_value már 1/0 INTEGER-t tárol — változatlanul átvehető.
+        'value_boolean': value['value_boolean'],
         'value_date': value['value_date'],
         'value_datetime': value['value_datetime'],
       });
@@ -383,7 +403,7 @@ class LocalRepository {
         'local_id': _uuid.v4(),
         'server_id': null,
         'inspection_local_id': localId,
-        'damage_local_id': sourceDamage == null ? null : damageMap[sourceDamage],
+        'damage_local_id': damageMap[sourceDamage],
         'source_server_id': '${photo['id']}',
         'photo_type': '${photo['photo_type']}',
         'local_path': null,
@@ -394,12 +414,13 @@ class LocalRepository {
     }
   }
 
-  /// Lokális jegyzőkönyvből másol. A sorok `baseline: 0`-val jönnek létre, mert
-  /// szerveroldali forrás híján a mobilnak kell feltöltenie mindent — a
-  /// sync_service a baseline sorokat szándékosan kihagyja.
-  Future<void> _copyFromLocal(Transaction txn, String localId, String formTypeId, String sourceLocalId) async {
-    final allowedFields = await txn.query('cached_form_field', columns: ['field_definition_id'], where: 'form_type_id = ?', whereArgs: [formTypeId]);
-    final allowed = allowedFields.map((row) => '${row['field_definition_id']}').toSet();
+  /// Lokális jegyzőkönyvből másol, ugyanazzal a szabállyal, mint a szerver. A
+  /// sérülések és sérülésfotók `baseline` sorok: feltöltéskor a szerver maga
+  /// másolja őket a forrás szerveroldali példányából (copy_from_local_id →
+  /// a forrás server_id-ja). Így semmi nem töltődik fel kétszer, és a forrás
+  /// másolt (helyi fájl nélküli) sérülésfotói sem vesznek el.
+  Future<void> _copyFromLocal(Transaction txn, String localId, String formTypeId, String phase, String sourceLocalId) async {
+    final allowed = await _phaseFieldIds(txn, formTypeId, phase);
 
     final sourceValues = await txn.query('local_inspection_value', where: 'inspection_local_id = ?', whereArgs: [sourceLocalId]);
     for (final value in sourceValues) {
@@ -429,12 +450,11 @@ class LocalRepository {
         'local_id': newId,
         'server_id': null,
         'inspection_local_id': localId,
-        'source_server_id': null,
-        'baseline': 0,
+        'source_server_id': damage['server_id'],
+        'baseline': 1,
       });
     }
     for (final photo in await txn.query('local_photo', where: 'inspection_local_id = ?', whereArgs: [sourceLocalId])) {
-      if (photo['local_path'] == null) continue; // nincs helyi fájl, nem tudnánk feltölteni
       final sourceDamage = photo['damage_local_id']?.toString();
       if (sourceDamage == null) continue; // csak sérülésfotó másolható
       await txn.insert('local_photo', {
@@ -442,10 +462,9 @@ class LocalRepository {
         'local_id': _uuid.v4(),
         'server_id': null,
         'inspection_local_id': localId,
-        'damage_local_id': sourceDamage == null ? null : damageMap[sourceDamage],
-        'source_server_id': null,
-        'storage_key': null,
-        'baseline': 0,
+        'damage_local_id': damageMap[sourceDamage],
+        'source_server_id': photo['server_id'],
+        'baseline': 1,
       });
     }
   }
@@ -474,25 +493,57 @@ class LocalRepository {
     return result;
   }
 
+  /// Minden szerkesztés csak piszkozaton engedett: a lezárt jegyzőkönyv
+  /// tartalma már a sync sorban van, utólagos változás soha nem jutna fel.
+  Future<void> _assertDraft(DatabaseExecutor db, String localId) async {
+    final rows = await db.query('local_inspection', columns: ['status'], where: 'local_id = ?', whereArgs: [localId], limit: 1);
+    if (rows.isEmpty) throw StateError('Hiányzó lokális jegyzőkönyv: $localId');
+    if (rows.first['status'] != 'DRAFT') throw StateError('A jegyzőkönyv már le van zárva, nem módosítható.');
+  }
+
+  /// Az üres érték (kiürített mező, minden opció levéve) nem egy üres sor,
+  /// hanem a sor hiánya — a szerver az üres értéket érvénytelennek tekintené.
+  static bool isEmptyValue(Map<String, dynamic> value, List<String> optionIds) {
+    bool blank(Object? v) => v == null || (v is String && v.trim().isEmpty);
+    return optionIds.isEmpty &&
+        blank(value['value_text']) &&
+        blank(value['value_number']) &&
+        value['value_boolean'] == null &&
+        blank(value['value_date']) &&
+        blank(value['value_datetime']);
+  }
+
+  /// Tizedesvessző → pont, hogy a szerver számként fogadja el.
+  static String? normalizeNumber(Object? raw) {
+    if (raw == null) return null;
+    final text = '$raw'.trim().replaceAll(',', '.');
+    return text.isEmpty ? null : text;
+  }
+
   Future<void> saveInspectionValue(String localId, String fieldId, Map<String, dynamic> value, List<String> optionIds) async {
     final db = await _db;
     await db.transaction((txn) async {
-      await txn.insert('local_inspection_value', {
-        'inspection_local_id': localId,
-        'field_definition_id': fieldId,
-        'value_text': value['value_text'],
-        'value_number': value['value_number'],
-        'value_boolean': value['value_boolean'] == null ? null : (value['value_boolean'] == true ? 1 : 0),
-        'value_date': value['value_date'],
-        'value_datetime': value['value_datetime'],
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await _assertDraft(txn, localId);
       await txn.delete('local_inspection_value_option', where: 'inspection_local_id = ? AND field_definition_id = ?', whereArgs: [localId, fieldId]);
-      for (final optionId in optionIds) {
-        await txn.insert('local_inspection_value_option', {
+      if (isEmptyValue(value, optionIds)) {
+        await txn.delete('local_inspection_value', where: 'inspection_local_id = ? AND field_definition_id = ?', whereArgs: [localId, fieldId]);
+      } else {
+        await txn.insert('local_inspection_value', {
           'inspection_local_id': localId,
           'field_definition_id': fieldId,
-          'option_id': optionId,
-        });
+          'value_text': value['value_text'],
+          'value_number': normalizeNumber(value['value_number']),
+          'value_boolean': value['value_boolean'] == null ? null : (value['value_boolean'] == true ? 1 : 0),
+          'value_date': value['value_date'],
+          'value_datetime': value['value_datetime'],
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        for (final optionId in optionIds) {
+          await txn.insert('local_inspection_value_option', {
+            'inspection_local_id': localId,
+            'field_definition_id': fieldId,
+            'option_id': optionId,
+          });
+        }
       }
       await txn.update('local_inspection', {'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
     });
@@ -507,17 +558,20 @@ class LocalRepository {
   Future<LocalDamage> addDamage({required String inspectionLocalId, required String description, String? damageType, String? location, String? severity, bool? isPreexisting}) async {
     final db = await _db;
     final id = _uuid.v4();
-    await db.insert('local_damage', {
-      'local_id': id,
-      'server_id': null,
-      'inspection_local_id': inspectionLocalId,
-      'source_server_id': null,
-      'damage_type': damageType,
-      'location': location,
-      'description': description,
-      'severity': severity,
-      'is_preexisting': isPreexisting == null ? null : (isPreexisting ? 1 : 0),
-      'baseline': 0,
+    await db.transaction((txn) async {
+      await _assertDraft(txn, inspectionLocalId);
+      await txn.insert('local_damage', {
+        'local_id': id,
+        'server_id': null,
+        'inspection_local_id': inspectionLocalId,
+        'source_server_id': null,
+        'damage_type': damageType,
+        'location': location,
+        'description': description,
+        'severity': severity,
+        'is_preexisting': isPreexisting == null ? null : (isPreexisting ? 1 : 0),
+        'baseline': 0,
+      });
     });
     return (await damages(inspectionLocalId)).firstWhere((damage) => damage.localId == id);
   }
@@ -535,18 +589,28 @@ class LocalRepository {
 
   Future<void> addPhoto({required String inspectionLocalId, required String photoType, required String localPath, String? damageLocalId}) async {
     final db = await _db;
-    await db.insert('local_photo', {
-      'local_id': _uuid.v4(),
-      'server_id': null,
-      'inspection_local_id': inspectionLocalId,
-      'damage_local_id': damageLocalId,
-      'source_server_id': null,
-      'photo_type': photoType,
-      'local_path': localPath,
-      'storage_key': null,
-      'captured_at': DateTime.now().toUtc().toIso8601String(),
-      'baseline': 0,
+    await db.transaction((txn) async {
+      await _assertDraft(txn, inspectionLocalId);
+      await txn.insert('local_photo', {
+        'local_id': _uuid.v4(),
+        'server_id': null,
+        'inspection_local_id': inspectionLocalId,
+        'damage_local_id': damageLocalId,
+        'source_server_id': null,
+        'photo_type': photoType,
+        'local_path': localPath,
+        'storage_key': null,
+        'captured_at': DateTime.now().toUtc().toIso8601String(),
+        'baseline': 0,
+      });
     });
+  }
+
+  /// A presign-nal kapott kulcs a PUT ELŐTT mentődik: retry-nál ugyanerre a
+  /// kulcsra kérünk új URL-t, így nem keletkezik árva vagy duplikált objektum.
+  Future<void> reservePhotoKey(String localId, String storageKey) async {
+    final db = await _db;
+    await db.update('local_photo', {'storage_key': storageKey}, where: 'local_id = ?', whereArgs: [localId]);
   }
 
   Future<void> updatePhotoUpload(String localId, {required String serverId, required String storageKey}) async {
@@ -562,16 +626,24 @@ class LocalRepository {
 
   Future<void> addSignature({required String inspectionLocalId, required String signerName, String? signerRole, required String localPath}) async {
     final db = await _db;
-    await db.insert('local_signature', {
-      'local_id': _uuid.v4(),
-      'server_id': null,
-      'inspection_local_id': inspectionLocalId,
-      'signer_name': signerName,
-      'signer_role': signerRole,
-      'local_path': localPath,
-      'storage_key': null,
-      'signed_at': DateTime.now().toUtc().toIso8601String(),
+    await db.transaction((txn) async {
+      await _assertDraft(txn, inspectionLocalId);
+      await txn.insert('local_signature', {
+        'local_id': _uuid.v4(),
+        'server_id': null,
+        'inspection_local_id': inspectionLocalId,
+        'signer_name': signerName,
+        'signer_role': signerRole,
+        'local_path': localPath,
+        'storage_key': null,
+        'signed_at': DateTime.now().toUtc().toIso8601String(),
+      });
     });
+  }
+
+  Future<void> reserveSignatureKey(String localId, String storageKey) async {
+    final db = await _db;
+    await db.update('local_signature', {'storage_key': storageKey}, where: 'local_id = ?', whereArgs: [localId]);
   }
 
   Future<void> updateSignatureUpload(String localId, {required String serverId, required String storageKey}) async {
@@ -584,10 +656,60 @@ class LocalRepository {
     await db.update('local_inspection', {'server_id': serverId, 'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
   }
 
-  Future<void> markInspectionLocalComplete(String localId) async {
+  /// A jegyzőkönyv lezárása és az ebből következő szakasz-állapotváltás EGY
+  /// tranzakció: vagy minden lokális változás és sync művelet létrejön, vagy
+  /// semmi. PICKUP lezárása elindítja a fuvart (ASSIGNED → IN_PROGRESS),
+  /// DROPOFF lezárása lezárja (IN_PROGRESS → COMPLETED_PENDING_SYNC).
+  /// Visszaadja a szakasz új lokális státuszát.
+  Future<String?> completeInspectionAndTransition(String localId) async {
     final db = await _db;
-    await db.update('local_inspection', {'status': 'COMPLETED_LOCAL', 'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
-    await enqueue('SYNC_INSPECTION', localId);
+    return db.transaction((txn) async {
+      await _assertDraft(txn, localId);
+      final row = (await txn.query('local_inspection', where: 'local_id = ?', whereArgs: [localId], limit: 1)).first;
+      final legKey = '${row['leg_key']}';
+      final phase = '${row['inspection_type']}';
+      await txn.update('local_inspection', {'status': 'COMPLETED_LOCAL', 'updated_at': DateTime.now().toUtc().toIso8601String()},
+          where: 'local_id = ?', whereArgs: [localId]);
+      await _enqueue(txn, 'SYNC_INSPECTION', localId, legKey);
+      return _transitionLeg(txn, legKey, phase);
+    });
+  }
+
+  /// Ha a szükséges jegyzőkönyv már lezárt (egy korábbi appverzió lezárása
+  /// nem indította el / nem zárta le a fuvart), csak a szakasz-állapotváltás.
+  Future<String?> transitionLegAfterInspection(String legKey, String phase) async {
+    final db = await _db;
+    return db.transaction((txn) async {
+      final rows = await txn.query('local_inspection',
+          columns: ['status'],
+          where: 'leg_key = ? AND inspection_type = ?',
+          whereArgs: [legKey, phase],
+          orderBy: 'created_at DESC',
+          limit: 1);
+      if (rows.isEmpty || !['COMPLETED_LOCAL', 'SYNCED'].contains(rows.first['status'])) {
+        throw StateError(phase == 'PICKUP'
+            ? 'A fuvar indításához előbb zárd le az átvételi jegyzőkönyvet.'
+            : 'A fuvar lezárásához előbb zárd le a leadási jegyzőkönyvet.');
+      }
+      return _transitionLeg(txn, legKey, phase);
+    });
+  }
+
+  Future<String?> _transitionLeg(Transaction txn, String legKey, String phase) async {
+    final legRows = await txn.query('cached_leg', columns: ['status'], where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
+    final status = legRows.isEmpty ? null : '${legRows.first['status']}';
+    final now = DateTime.now().toUtc().toIso8601String();
+    if (phase == 'PICKUP' && status == 'ASSIGNED') {
+      await txn.update('cached_leg', {'status': 'IN_PROGRESS', 'updated_at': now}, where: 'leg_key = ?', whereArgs: [legKey]);
+      await _enqueue(txn, 'START_LEG', legKey, legKey);
+      return 'IN_PROGRESS';
+    }
+    if (phase == 'DROPOFF' && status == 'IN_PROGRESS') {
+      await txn.update('cached_leg', {'status': 'COMPLETED_PENDING_SYNC', 'updated_at': now}, where: 'leg_key = ?', whereArgs: [legKey]);
+      await _enqueue(txn, 'COMPLETE_LEG', legKey, legKey);
+      return 'COMPLETED_PENDING_SYNC';
+    }
+    return status;
   }
 
   Future<void> markInspectionSynced(String localId) async {
@@ -595,18 +717,34 @@ class LocalRepository {
     await db.update('local_inspection', {'status': 'SYNCED', 'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
   }
 
-  Future<void> enqueue(String type, String entityId) async {
+  /// Nem-baseline elemek, amelyek még nem értek fel a szerverre. Szerveroldalon
+  /// már lezárt jegyzőkönyvnél csak akkor mondhatjuk SYNCED-et, ha ez 0.
+  Future<int> unsyncedItemCount(String localId) async {
     final db = await _db;
-    // ERROR is deduped too: egy hibára futott művelet még él (a backoff újra
-    // sorra veszi), mellé beszúrni egy másodikat azt jelentette, hogy ugyanazt
-    // a jegyzőkönyvet kétszer töltöttük fel — a második már „inspection closed".
-    final existing = await db.query('sync_operation', where: 'operation_type = ? AND entity_id = ? AND state IN (?, ?, ?)', whereArgs: [type, entityId, 'PENDING', 'RUNNING', 'ERROR'], limit: 1);
+    final rows = await db.rawQuery(
+      'SELECT '
+      '(SELECT COUNT(*) FROM local_damage WHERE inspection_local_id = ? AND baseline = 0 AND server_id IS NULL) + '
+      '(SELECT COUNT(*) FROM local_photo WHERE inspection_local_id = ? AND baseline = 0 AND server_id IS NULL) + '
+      '(SELECT COUNT(*) FROM local_signature WHERE inspection_local_id = ? AND server_id IS NULL) AS count',
+      [localId, localId, localId],
+    );
+    return Sqflite.firstIntValue(rows) ?? 0;
+  }
+
+  Future<void> _enqueue(DatabaseExecutor db, String type, String entityId, String legKey) async {
+    // Egy még élő (akár hibás vagy ütköző) művelet mellé nem kerül második
+    // ugyanarra az entitásra — az ugyanazt kétszer küldené fel.
+    final existing = await db.query('sync_operation',
+        where: 'operation_type = ? AND entity_id = ? AND state IN (?, ?, ?, ?)',
+        whereArgs: [type, entityId, 'PENDING', 'RUNNING', 'ERROR', 'CONFLICT'],
+        limit: 1);
     if (existing.isNotEmpty) return;
     final now = DateTime.now().toUtc().toIso8601String();
     await db.insert('sync_operation', {
       'id': _uuid.v4(),
       'operation_type': type,
       'entity_id': entityId,
+      'leg_key': legKey,
       'state': 'PENDING',
       'attempts': 0,
       'last_error': null,
@@ -615,15 +753,14 @@ class LocalRepository {
     });
   }
 
-  /// Strictly in enqueue order. The backoff decision deliberately does NOT
-  /// live here as a filter: filtering a waiting operation out of the list lets
-  /// the next one overtake it, and this queue is an ordered log of one driver's
-  /// actions on the same leg (protocol upload, then leg start, then leg
-  /// complete). SyncService stops the drain at the first operation that is not
-  /// due yet instead.
+  /// Strictly in enqueue order, CONFLICT included. The queue is an ordered log
+  /// per leg (protocol upload, then leg start, then leg complete): SyncService
+  /// lets a CONFLICT, failed or not-yet-due operation block the rest of the
+  /// SAME leg, while other legs keep going.
   Future<List<SyncOperation>> pendingOperations() async {
     final db = await _db;
-    final rows = await db.query('sync_operation', where: 'state IN (?, ?)', whereArgs: ['PENDING', 'ERROR'], orderBy: 'created_at');
+    final rows = await db.query('sync_operation',
+        where: 'state IN (?, ?, ?)', whereArgs: ['PENDING', 'ERROR', 'CONFLICT'], orderBy: 'created_at, rowid');
     return rows.map(SyncOperation.fromMap).toList();
   }
 
@@ -657,11 +794,28 @@ class LocalRepository {
     await db.update('sync_operation', {'state': 'PENDING', 'last_error': null, 'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'id = ?', whereArgs: [id]);
   }
 
-  // ponytail: feltétel nélküli reset induláskor, mert a szerver idempotens. Ha ez valaha megváltozik, korlátozni kell időre.
+  // Feltétel nélküli reset induláskor: minden feltöltési lépés idempotens
+  // (inspection és damage: deviceOperationId, fotó és aláírás: a PUT előtt
+  // lefoglalt storageKey, values: upsert, complete/start/complete leg: no-op).
   Future<void> resetStuckRunningOperations() async {
     final db = await _db;
     await db.rawUpdate("UPDATE sync_operation SET state='PENDING', updated_at=? WHERE state='RUNNING'",
         [DateTime.now().toUtc().toIso8601String()]);
+  }
+
+  /// Szakaszonként a legrosszabb nyitott művelet — ezt látja a sofőr.
+  Future<Map<String, LegSyncState>> legSyncStates() async {
+    final db = await _db;
+    final rows = await db.query('sync_operation', columns: ['leg_key', 'state'], where: "state <> 'DONE' AND leg_key IS NOT NULL");
+    const rank = {'PENDING': 1, 'RUNNING': 2, 'ERROR': 3, 'CONFLICT': 4};
+    const byRank = {1: LegSyncState.pending, 2: LegSyncState.running, 3: LegSyncState.error, 4: LegSyncState.conflict};
+    final worst = <String, int>{};
+    for (final row in rows) {
+      final key = '${row['leg_key']}';
+      final value = rank['${row['state']}'] ?? 1;
+      if (value > (worst[key] ?? 0)) worst[key] = value;
+    }
+    return {for (final entry in worst.entries) entry.key: byRank[entry.value]!};
   }
 
   Future<List<SyncOperation>> allOpenOperations() async {
@@ -688,16 +842,20 @@ class LocalRepository {
 extension LocalRepositoryEditing on LocalRepository {
   Future<void> deletePhoto(String photoLocalId) async {
     final db = await _db;
-    final rows = await db.query('local_photo', where: 'local_id = ?', whereArgs: [photoLocalId], limit: 1);
-    if (rows.isEmpty || rows.first['baseline'] == 1) return;
-    await db.delete('local_photo', where: 'local_id = ?', whereArgs: [photoLocalId]);
+    await db.transaction((txn) async {
+      final rows = await txn.query('local_photo', where: 'local_id = ?', whereArgs: [photoLocalId], limit: 1);
+      if (rows.isEmpty || rows.first['baseline'] == 1) return;
+      await _assertDraft(txn, '${rows.first['inspection_local_id']}');
+      await txn.delete('local_photo', where: 'local_id = ?', whereArgs: [photoLocalId]);
+    });
   }
 
   Future<void> deleteDamage(String damageLocalId) async {
     final db = await _db;
-    final rows = await db.query('local_damage', where: 'local_id = ?', whereArgs: [damageLocalId], limit: 1);
-    if (rows.isEmpty || rows.first['baseline'] == 1) return;
     await db.transaction((txn) async {
+      final rows = await txn.query('local_damage', where: 'local_id = ?', whereArgs: [damageLocalId], limit: 1);
+      if (rows.isEmpty || rows.first['baseline'] == 1) return;
+      await _assertDraft(txn, '${rows.first['inspection_local_id']}');
       await txn.delete('local_photo', where: 'damage_local_id = ? AND baseline = 0', whereArgs: [damageLocalId]);
       await txn.delete('local_damage', where: 'local_id = ?', whereArgs: [damageLocalId]);
     });
@@ -705,6 +863,11 @@ extension LocalRepositoryEditing on LocalRepository {
 
   Future<void> deleteSignature(String signatureLocalId) async {
     final db = await _db;
-    await db.delete('local_signature', where: 'local_id = ?', whereArgs: [signatureLocalId]);
+    await db.transaction((txn) async {
+      final rows = await txn.query('local_signature', where: 'local_id = ?', whereArgs: [signatureLocalId], limit: 1);
+      if (rows.isEmpty) return;
+      await _assertDraft(txn, '${rows.first['inspection_local_id']}');
+      await txn.delete('local_signature', where: 'local_id = ?', whereArgs: [signatureLocalId]);
+    });
   }
 }

@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../theme.dart';
+import 'sync_badge.dart';
 
 class LegCard extends StatelessWidget {
-  const LegCard({super.key, required this.leg, required this.onTap, this.trailing});
+  const LegCard({super.key, required this.leg, required this.onTap, this.trailing, this.syncState});
   final DriverLeg leg;
   final VoidCallback onTap;
   final Widget? trailing;
+
+  /// Csak a telefonon lévő, még fel nem töltött adatnál jelenik meg.
+  final LegSyncState? syncState;
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +37,10 @@ class LegCard extends StatelessWidget {
               if (vehicle.isNotEmpty) Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(vehicle, style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+              ),
+              if (syncState != null) Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: SyncBadge(syncState),
               ),
               const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider(height: 1)),
               _AddressLine(icon: Icons.trip_origin, label: 'Felvétel', address: leg.fromAddress, time: leg.plannedStart),
