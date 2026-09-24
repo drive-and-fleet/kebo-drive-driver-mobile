@@ -35,6 +35,26 @@ class WorkService {
     return local.cachedLegs();
   }
 
+  /// A sofőr teljesített fuvarai az elmúlt [days] napból, a legújabb elöl.
+  /// Local-first: ami a szerverről jön, a helyi tárba kerül, így a fuvar
+  /// adatlapja offline is megnyitható; hálózat nélkül a telefonon már meglévő
+  /// teljesített fuvarok látszanak (`fromServer: false`).
+  Future<({List<DriverLeg> legs, bool fromServer})> completedWork(int days) async {
+    var fromServer = true;
+    try {
+      await local.cacheLegs(await api.completedLegs(days: days));
+    } catch (_) {
+      fromServer = false;
+    }
+    final since = DateTime.now().subtract(Duration(days: days));
+    final legs = (await local.cachedLegs())
+        .where((leg) => leg.status == 'COMPLETED' || leg.status == 'COMPLETED_PENDING_SYNC')
+        .where((leg) => leg.plannedStart == null || leg.plannedStart!.isAfter(since))
+        .toList()
+      ..sort((a, b) => (b.plannedStart ?? DateTime(0)).compareTo(a.plannedStart ?? DateTime(0)));
+    return (legs: legs, fromServer: fromServer);
+  }
+
   /// `plate` nélkül a szabad fuvarok teljes böngészhető listáját adja vissza.
   Future<List<DriverLeg>> availableLegs({String? plate}) => api.availableLegs(plate: plate);
 

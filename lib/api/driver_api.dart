@@ -16,6 +16,12 @@ class DriverApi {
     return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
+  /// A sofőr által teljesített szakaszok az elmúlt [days] napból, a legújabb elöl.
+  Future<List<DriverLeg>> completedLegs({int days = 90}) async {
+    final raw = await _http.get('/api/v1/driver/legs/completed', token: await _token(), query: {'days': '$days'}) as List<dynamic>;
+    return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
   /// `plate` nélkül az összes felvehető fuvart adja vissza; a rendszám csak szűrő.
   Future<List<DriverLeg>> availableLegs({String? plate}) async {
     final raw = await _http.get(
