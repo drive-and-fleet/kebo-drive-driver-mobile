@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/sync_badge.dart';
 import 'inspection_setup_screen.dart';
 import 'transfer_create_screen.dart';
+import '../../logging/app_log.dart';
 
 class LegDetailScreen extends StatefulWidget {
   const LegDetailScreen({super.key, required this.services, required this.legKey});
@@ -62,6 +63,7 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
   Future<void> _openPhase(String phase, Future<void> Function(DriverLeg leg) transitionOnly) async {
     final leg = _leg;
     if (leg == null || _busy) return;
+    log.info('work', '${phase == 'PICKUP' ? 'Fuvar indítása' : 'Fuvar lezárása'} gomb: ${leg.legKey} (${leg.status})');
     setState(() { _busy = true; _error = null; });
     try {
       final existing = await widget.services.local.inspectionForLeg(leg.legKey, phase);
@@ -74,7 +76,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
           builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: phase),
         ));
       }
-    } catch (e) {
+    } catch (e, stack) {
+      log.error('work', 'Fuvar ${phase == 'PICKUP' ? 'indítása' : 'lezárása'} nem sikerült: ${leg.legKey}', e, stack);
       if (mounted) setState(() => _error = '$e');
     } finally {
       await _load();

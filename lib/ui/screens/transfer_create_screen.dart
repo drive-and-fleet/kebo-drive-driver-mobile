@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/app_services.dart';
+import '../../logging/app_log.dart';
 
 class TransferCreateScreen extends StatefulWidget {
   const TransferCreateScreen({super.key, required this.services, required this.leg});
@@ -38,11 +39,13 @@ class _TransferCreateScreenState extends State<TransferCreateScreen> {
     if (_selected == null) return;
     setState(() => _busy = true);
     try {
+      log.info('transfer', 'Átadási kérés: ${widget.leg.legKey} → sofőr $_selected');
       await widget.services.api.requestTransfer(widget.leg.legKey, _selected!);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Átadási kérés elküldve. A másik sofőr jóváhagyása szükséges.')));
       Navigator.pop(context);
     } catch (e) {
+      log.warn('transfer', 'Átadási kérés nem sikerült: ${widget.leg.legKey}', e);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
       if (mounted) setState(() => _busy = false);

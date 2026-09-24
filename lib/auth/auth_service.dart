@@ -12,6 +12,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../api/http_api.dart';
 import '../config/app_config.dart';
 import '../models/models.dart';
+import '../logging/app_log.dart';
 
 class DriverNotRegisteredException implements Exception {
   const DriverNotRegisteredException();
@@ -58,6 +59,7 @@ class AuthService extends ChangeNotifier {
       }
     }
     await _initGoogle();
+    log.info('auth', _session == null ? 'Nincs mentett munkamenet' : 'Mentett munkamenet: sofőr ${_session!.driverId}, felhasználó ${_session!.userId}');
     notifyListeners();
   }
 
@@ -152,6 +154,7 @@ class AuthService extends ChangeNotifier {
     String? phone,
     String? licenseNumber,
   }) async {
+    log.info('auth', 'Regisztráció a(z) $serviceOrgId sofőrszolgálathoz');
     final result = await _http.post('/api/v1/driver/auth/register-password', body: {
       'email': email.trim(),
       'password': password,
@@ -166,6 +169,7 @@ class AuthService extends ChangeNotifier {
 
   /// E-mail/jelszó bejelentkezés a Driver API-val, Firebase nélkül.
   Future<void> signInPassword(String email, String password) async {
+    log.info('auth', 'Jelszavas bejelentkezés indul');
     await _run(() async {
       try {
         final result = await _http.post('/api/v1/driver/auth/login', body: {
@@ -174,6 +178,7 @@ class AuthService extends ChangeNotifier {
         }) as Map<String, dynamic>;
         await _storeSession(result);
       } on ApiException catch (e) {
+        log.warn('auth', 'Bejelentkezés sikertelen (HTTP ${e.statusCode})', e.message);
         if (e.statusCode == 403) throw DriverPendingException(e.message);
         rethrow;
       }
@@ -214,6 +219,7 @@ class AuthService extends ChangeNotifier {
     // újítani; a token élettartama emiatt hosszú (lásd DRIVER_ACCESS_TOKEN_TTL_SECONDS
     // a szerveren). Ha mégis lejárt, csak új bejelentkezés segít.
     if (token != null) return token;
+    log.warn('auth', 'A munkamenet lejárt, új bejelentkezés kell');
     throw const SessionExpiredException();
   }
 
@@ -226,6 +232,7 @@ class AuthService extends ChangeNotifier {
     final driver = DriverSession.fromJson(Map<String, dynamic>.from(result['driver'] as Map));
     _platformToken = accessToken;
     _session = driver;
+    log.info('auth', 'Bejelentkezve: sofőr ${driver.driverId}, felhasználó ${driver.userId}');
     await _storage.write(key: _tokenKey, value: accessToken);
     await _storage.write(key: _sessionKey, value: jsonEncode(driver.toJson()));
     notifyListeners();
@@ -254,6 +261,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    log.info('auth', 'Kijelentkezés');
     if (AppConfig.socialLoginEnabled) {
       try {
         await FirebaseAuth.instance.signOut();

@@ -5,6 +5,7 @@ import '../../services/app_services.dart';
 import '../theme.dart';
 import '../widgets/leg_card.dart';
 import 'leg_detail_screen.dart';
+import '../../logging/app_log.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, required this.services, this.onClaimed});
@@ -42,6 +43,7 @@ class SearchScreenState extends State<SearchScreen> {
       final results = await widget.services.work.availableLegs(plate: _plate.text.trim());
       if (mounted) setState(() => _results = results);
     } catch (e) {
+      log.warn('work', 'Szabad fuvarok nem töltődtek be', e);
       if (mounted) setState(() => _message = 'A szabad fuvarok listája internetkapcsolatot igényel. $e');
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -61,6 +63,7 @@ class SearchScreenState extends State<SearchScreen> {
       ));
       await _load();
     } catch (e) {
+      log.warn('work', 'Fuvar felvétele nem sikerült: ${leg.legKey}', e);
       if (mounted) setState(() => _message = '$e');
     } finally {
       if (mounted) setState(() => _busy = false);

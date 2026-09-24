@@ -8,6 +8,7 @@ import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../widgets/dynamic_field.dart';
+import '../../logging/app_log.dart';
 
 // ponytail: fix lista, DB-lookup csak ha szolgálatonként eltérő értékkészlet kell.
 const _damageLocations = [
@@ -85,19 +86,26 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   Future<void> _guard(Future<void> Function() action) async {
     try {
       await action();
-    } catch (e) {
+    } catch (e, stack) {
+      log.error('insp', 'Mentés a telefonra nem sikerült (${widget.draftId})', e, stack);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nem sikerült menteni: $e')));
     }
     await _reload();
   }
 
-  Future<void> _saveValue(FormFieldConfig field, Map<String, dynamic> value, List<String> options) =>
-      _guard(() => widget.services.local.saveInspectionValue(widget.draftId, field.fieldDefinitionId, value, options));
+  Future<void> _saveValue(FormFieldConfig field, Map<String, dynamic> value, List<String> options) {
+    log.debug('insp', 'Mező mentve: ${field.fieldDefinitionId} (${widget.draftId})');
+    return _guard(() => widget.services.local.saveInspectionValue(widget.draftId, field.fieldDefinitionId, value, options));
+  }
 
   Future<void> _takeGeneralPhoto(String type) async {
     final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2200);
-    if (image == null) return;
+    if (image == null) {
+      log.debug('insp', 'Fotó megszakítva: $type');
+      return;
+    }
     final path = await widget.services.fileStore.persistImage(image.path);
+    log.info('insp', 'Fotó készült: $type (${widget.draftId})');
     await _guard(() => widget.services.local.addPhoto(inspectionLocalId: widget.draftId, photoType: type, localPath: path));
   }
 
@@ -144,6 +152,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     );
     if (ok == true) {
       final text = description.text.trim();
+      log.info('insp', 'Sérülés rögzítve: ${location ?? '-'} / ${type ?? '-'} / ${severity ?? '-'}${preexisting ? ' (korábbi)' : ''} (${widget.draftId})');
       await _guard(() => widget.services.local.addDamage(
             inspectionLocalId: widget.draftId,
             description: text,
@@ -160,6 +169,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2200);
     if (image == null) return;
     final path = await widget.services.fileStore.persistImage(image.path);
+    log.info('insp', 'Sérülésfotó készült: ${damage.localId} (${widget.draftId})');
     await _guard(() => widget.services.local.addPhoto(
           inspectionLocalId: widget.draftId,
           photoType: 'DAMAGE',
@@ -192,6 +202,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       if (bytes != null) {
         final path = await widget.services.fileStore.persistBytes(bytes);
         final signerName = name.text.trim();
+        log.info('insp', 'Aláírás rögzítve (${widget.draftId})');
         await _guard(() => widget.services.local.addSignature(
               inspectionLocalId: widget.draftId,
               signerName: signerName,
@@ -207,6 +218,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     final draft = _draft;
     if (draft == null) return;
     setState(() => _finalizing = true);
+    log.info('insp', 'Lezárás kérve: ${draft.inspectionType} ${draft.localId}');
     try {
       final legStatus = await widget.services.work.finalizeInspection(draft, widget.form);
       if (!mounted) return;

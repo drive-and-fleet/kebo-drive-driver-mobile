@@ -24,6 +24,7 @@ dependencies:
   http: 1.6.0
   crypto: 3.0.7
   flutter_secure_storage: ^10.3.4
+  package_info_plus: 10.2.1
 
 dev_dependencies:
   flutter_test:

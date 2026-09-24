@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_services.dart';
+import '../../logging/app_log.dart';
 
 class TransfersScreen extends StatefulWidget {
   const TransfersScreen({super.key, required this.services});
@@ -34,6 +35,7 @@ class _TransfersScreenState extends State<TransfersScreen> {
   }
 
   Future<void> _act(String id, bool approve) async {
+    log.info('transfer', '${approve ? 'Jóváhagyás' : 'Elutasítás'}: $id');
     try {
       if (approve) {
         await widget.services.api.approveTransfer(id);
@@ -42,6 +44,7 @@ class _TransfersScreenState extends State<TransfersScreen> {
       }
       await _load();
     } catch (e) {
+      log.warn('transfer', 'Átadás kezelése nem sikerült: $id', e);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
   }

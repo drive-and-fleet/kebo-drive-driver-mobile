@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../api/driver_api.dart';
 import '../api/http_api.dart';
 import '../local/local_repository.dart';
+import '../logging/app_log.dart';
 import '../models/local_models.dart';
 
 /// Exponential backoff, capped at 5 minutes, so a failing operation is not
@@ -72,7 +73,9 @@ class SyncService extends ChangeNotifier {
   Future<void> initialize() async {
     await local.resetStuckRunningOperations();
     await refreshCount();
+    log.info('sync', 'Indulás: $_pending függő művelet');
     _connectivity = Connectivity().onConnectivityChanged.listen((results) {
+      log.info('net', 'Hálózat: ${results.map((r) => r.name).join(', ')}');
       if (!results.contains(ConnectivityResult.none)) unawaited(run());
     });
     // ponytail: foreground periodic retry, not a background task. A closed-app
@@ -122,13 +125,18 @@ class SyncService extends ChangeNotifier {
     // még le nem telt backoff) a szakasz összes későbbi műveletét visszatartja.
     // Más szakaszok műveleteit viszont nem — azok függetlenek.
     final blocked = <String>{};
-    for (final operation in await local.pendingOperations()) {
+    final operations = await local.pendingOperations();
+    if (operations.isNotEmpty) log.info('sync', 'Szinkron kör: ${operations.length} függő művelet');
+    for (final operation in operations) {
       final leg = operation.legKey ?? operation.entityId;
+      final what = '${operation.operationType} ${operation.entityId} (szakasz $leg, ${operation.attempts}. próba)';
       if (blocked.contains(leg)) continue;
       if (operation.state == 'CONFLICT' || !_isDue(operation)) {
+        if (operation.state == 'CONFLICT') log.warn('sync', 'Ütközés miatt vár: $what', operation.lastError);
         blocked.add(leg);
         continue;
       }
+      log.info('sync', 'Indul: $what');
       await local.operationRunning(operation.id);
       await refreshCount();
       try {
@@ -146,12 +154,15 @@ class SyncService extends ChangeNotifier {
             throw StateError('Ismeretlen sync művelet: ${operation.operationType}');
         }
         await local.operationDone(operation.id);
+        log.info('sync', 'Kész: $what');
       } on ApiException catch (e) {
         blocked.add(leg);
+        log.warn('sync', '${e.isConflict ? 'Ütközés' : 'Hiba'}: $what — HTTP ${e.statusCode}', e.message);
         await local.operationError(operation.id, e.message, conflict: e.isConflict);
         if (e.statusCode == 0) break; // no network: keep the remaining queue untouched
-      } catch (e) {
+      } catch (e, stack) {
         blocked.add(leg);
+        log.error('sync', 'Hiba: $what', e, stack);
         await local.operationError(operation.id, e.toString());
       } finally {
         await refreshCount();
@@ -189,8 +200,9 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Lokális forrásból másolt jegyzőkönyv: a szerver a forrás szerveroldali
-  /// példányából másol. A forrás ugyanennek a szakasznak egy korábbi
-  /// jegyzőkönyve, így a szakaszonkénti sorrend miatt ekkorra már fent van.
+  /// példányából másol. A forrás az autó közvetlenül előző jegyzőkönyve; ha az
+  /// egy másik szakaszé és még nincs fent, ez a művelet hibával visszalép, és a
+  /// következő körben (a forrás feltöltése után) megy tovább.
   Future<String?> _copySource(LocalInspectionDraft draft) async {
     if (draft.copyFromServerId != null) return draft.copyFromServerId;
     final sourceId = draft.copyFromLocalId;
@@ -208,6 +220,7 @@ class SyncService extends ChangeNotifier {
     if (draft == null) throw StateError('Hiányzó lokális jegyzőkönyv: $localId');
 
     var serverId = draft.serverId;
+    log.info('sync', 'Jegyzőkönyv feltöltése: ${draft.inspectionType} $localId, szakasz ${draft.legKey}${serverId == null ? '' : ', szerver $serverId'}');
     if (serverId == null) {
       serverId = await api.createInspection(
         legKey: draft.legKey,
@@ -217,6 +230,7 @@ class SyncService extends ChangeNotifier {
         copyFromInspectionId: await _copySource(draft),
       );
       await local.markInspectionServerId(localId, serverId);
+      log.info('sync', 'Jegyzőkönyv létrehozva a szerveren: $serverId');
       draft = (await local.inspection(localId))!;
     }
 
@@ -261,6 +275,7 @@ class SyncService extends ChangeNotifier {
         'capturedAt': photo.capturedAt.toUtc().toIso8601String(),
       });
       await local.updatePhotoUpload(photo.localId, serverId: photoId, storageKey: storageKey);
+      log.info('sync', 'Fotó feltöltve: ${photo.photoType}${photo.damageLocalId == null ? '' : ' (sérülés)'} → $photoId');
     }
 
     for (final signature in (await local.signatures(localId)).where((s) => s.serverId == null)) {
@@ -280,12 +295,15 @@ class SyncService extends ChangeNotifier {
         'signedAt': signature.signedAt.toUtc().toIso8601String(),
       });
       await local.updateSignatureUpload(signature.localId, serverId: signatureId, storageKey: storageKey);
+      log.info('sync', 'Aláírás feltöltve → $signatureId');
     }
 
     await api.completeInspection(serverId);
+    log.info('sync', 'Jegyzőkönyv lezárva a szerveren: $serverId');
   }
 
   Future<void> retry(String operationId) async {
+    log.info('sync', 'Kézi újrapróbálás: $operationId');
     await local.retryOperation(operationId);
     await run();
   }

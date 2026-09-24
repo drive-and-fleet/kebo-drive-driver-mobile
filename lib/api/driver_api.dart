@@ -35,6 +35,12 @@ class DriverApi {
   Future<List<dynamic>> forms(String serviceOrgId) async =>
       (await _http.get('/api/v1/driver/services/$serviceOrgId/forms', token: await _token())) as List<dynamic>;
 
+  /// Hibajelentés a naplóval; a válasz a jelentés azonosítója.
+  Future<String> submitBugReport(Map<String, dynamic> body) async {
+    final result = await _http.post('/api/v1/driver/bug-reports', token: await _token(), body: body) as Map<String, dynamic>;
+    return '${result['id']}';
+  }
+
   Future<List<dynamic>> previousInspections(String legKey) async =>
       (await _http.get('/api/v1/driver/legs/$legKey/previous-inspections', token: await _token())) as List<dynamic>;
 

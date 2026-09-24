@@ -5,6 +5,8 @@ import 'my_work_screen.dart';
 import 'search_screen.dart';
 import 'sync_screen.dart';
 import 'transfers_screen.dart';
+import '../../logging/app_log.dart';
+import 'bug_report_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.services});
@@ -55,12 +57,22 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
             ),
           ),
+          IconButton(
+            tooltip: 'Hibajelentés',
+            icon: const Icon(Icons.bug_report_outlined),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => BugReportScreen(services: widget.services),
+            )),
+          ),
         ],
       ),
       body: IndexedStack(index: _index, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
+        onDestinationSelected: (value) {
+          log.debug('ui', 'Fül: ${['Munkáim', 'Szabad fuvarok', 'Átadás', 'Szinkron'][value]}');
+          setState(() => _index = value);
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.route_outlined), selectedIcon: Icon(Icons.route), label: 'Munkáim'),
           NavigationDestination(icon: Icon(Icons.playlist_add_check_outlined), selectedIcon: Icon(Icons.playlist_add_check), label: 'Szabad fuvarok'),

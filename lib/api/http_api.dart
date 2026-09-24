@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../logging/app_log.dart';
+
 class ApiException implements Exception {
   const ApiException(this.statusCode, this.message, {this.body});
   final int statusCode;
@@ -53,21 +55,34 @@ class HttpApi {
   /// saját magát jelenti), az nem ugyanaz, mint hogy nincs internet, ezért a
   /// hibaüzenet megnevezi a hosztot.
   Future<void> putBytes(Uri uri, List<int> bytes, String contentType) async {
+    final started = DateTime.now();
+    // A presigned URL aláírást tartalmaz: csak a hoszt és az útvonal kerül a naplóba.
+    final where = '${uri.host}:${uri.port}${uri.path}';
     try {
       final response = await _client.put(uri, headers: {'Content-Type': contentType}, body: bytes).timeout(uploadTimeout);
+      final ms = DateTime.now().difference(started).inMilliseconds;
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        log.warn('http', 'PUT $where → ${response.statusCode} (${bytes.length} B, $ms ms)');
         throw ApiException(response.statusCode, 'Fájl feltöltési hiba (HTTP ${response.statusCode})');
       }
+      log.info('http', 'PUT $where → ${response.statusCode} (${bytes.length} B, $ms ms)');
     } on TimeoutException {
+      log.warn('http', 'PUT $where időtúllépés');
       throw ApiException(0, 'A tárhely nem válaszolt időben: ${uri.host}:${uri.port}');
     } on SocketException catch (e) {
+      log.warn('http', 'PUT $where nem érhető el', e.message);
       throw ApiException(0, 'A tárhely nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     } on http.ClientException catch (e) {
+      log.warn('http', 'PUT $where nem érhető el', e.message);
       throw ApiException(0, 'A tárhely nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     }
   }
 
   Future<dynamic> _send(String method, Uri uri, {String? token, Object? body}) async {
+    final started = DateTime.now();
+    // Kérés- és választörzs nem kerül a naplóba (jelszó, token lehet benne).
+    final what = '$method ${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
+    int elapsed() => DateTime.now().difference(started).inMilliseconds;
     try {
       final request = http.Request(method, uri);
       request.headers['Accept'] = 'application/json';
@@ -90,14 +105,19 @@ class HttpApi {
         final message = decoded is Map && decoded['message'] != null
             ? (decoded['message'] is List ? (decoded['message'] as List).join(', ') : '${decoded['message']}')
             : 'HTTP ${response.statusCode}';
+        log.warn('http', '$what → ${response.statusCode} (${elapsed()} ms)', message);
         throw ApiException(response.statusCode, message, body: decoded);
       }
+      log.info('http', '$what → ${response.statusCode} (${elapsed()} ms)');
       return decoded;
     } on TimeoutException {
+      log.warn('http', '$what időtúllépés (${elapsed()} ms)');
       throw ApiException(0, 'A szerver nem válaszolt időben: ${uri.host}:${uri.port}');
     } on SocketException catch (e) {
+      log.warn('http', '$what: a szerver nem érhető el', e.message);
       throw ApiException(0, 'A szerver nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     } on http.ClientException catch (e) {
+      log.warn('http', '$what: a szerver nem érhető el', e.message);
       throw ApiException(0, 'A szerver nem érhető el: ${uri.host}:${uri.port}', body: e.message);
     }
   }
