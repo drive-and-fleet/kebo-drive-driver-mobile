@@ -27,6 +27,7 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: fuvar adatlap ${widget.legKey}');
     // A háttérszinkron a szakasz státuszát és a sync jelzést is változtatja.
     widget.services.sync.addListener(_refresh);
     _load();

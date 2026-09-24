@@ -771,6 +771,38 @@ class LocalRepository {
 
   /// Nem-baseline elemek, amelyek még nem értek fel a szerverre. Szerveroldalon
   /// már lezárt jegyzőkönyvnél csak akkor mondhatjuk SYNCED-et, ha ez 0.
+  /// A telefon állapota szövegként a hibajelentés végére: azonosítók, állapotok
+  /// és hibák — mezőértékek, nevek, fotók nélkül.
+  Future<String> diagnostics() async {
+    final db = await _db;
+    final out = StringBuffer();
+    final ops = await db.query('sync_operation', where: "state <> 'DONE'", orderBy: 'created_at');
+    final done = Sqflite.firstIntValue(await db.rawQuery("SELECT COUNT(*) FROM sync_operation WHERE state = 'DONE'")) ?? 0;
+    out.writeln('Függő szinkron műveletek: ${ops.length} (kész: $done)');
+    for (final o in ops) {
+      out.writeln('  ${o['operation_type']} ${o['entity_id']} szakasz=${o['leg_key'] ?? '-'} állapot=${o['state']} '
+          'próbák=${o['attempts']} létrehozva=${o['created_at']} frissítve=${o['updated_at']}'
+          '${o['last_error'] == null ? '' : ' hiba: ${o['last_error']}'}');
+    }
+    final legs = await db.query('cached_leg', orderBy: 'planned_start IS NULL, planned_start, sequence_no');
+    out.writeln('Szakaszok a telefonon: ${legs.length}');
+    for (final l in legs) {
+      out.writeln('  ${l['leg_key']} ${l['order_no']} #${l['sequence_no']} ${l['registration_number']} '
+          'jármű=${l['order_vehicle_id']} állapot=${l['status']} tervezett=${l['planned_start'] ?? '-'} frissítve=${l['updated_at']}');
+    }
+    final inspections = await db.query('local_inspection', orderBy: 'updated_at');
+    out.writeln('Jegyzőkönyvek a telefonon: ${inspections.length}');
+    for (final i in inspections) {
+      final id = '${i['local_id']}';
+      final photos = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM local_photo WHERE inspection_local_id = ?', [id])) ?? 0;
+      final damages = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM local_damage WHERE inspection_local_id = ?', [id])) ?? 0;
+      out.writeln('  $id ${i['inspection_type']} szakasz=${i['leg_key']} állapot=${i['status']} szerver=${i['server_id'] ?? '-'} '
+          'form=${i['form_type_id']} másolás=${i['copy_from_server_id'] ?? i['copy_from_local_id'] ?? '-'} '
+          'fotó=$photos sérülés=$damages feltöltetlen=${await unsyncedItemCount(id)} frissítve=${i['updated_at']}');
+    }
+    return out.toString();
+  }
+
   Future<int> unsyncedItemCount(String localId) async {
     final db = await _db;
     final rows = await db.rawQuery(

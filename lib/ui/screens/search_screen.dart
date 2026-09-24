@@ -28,6 +28,7 @@ class SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Szabad fuvarok');
     _load();
   }
 
@@ -38,9 +39,11 @@ class SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _load() async {
+    log.info('work', 'Szabad fuvarok lekérése${_plate.text.trim().isEmpty ? '' : ' (rendszám: ${_plate.text.trim()})'}');
     setState(() { _loading = true; _message = null; });
     try {
       final results = await widget.services.work.availableLegs(plate: _plate.text.trim());
+      log.info('work', 'Szabad fuvarok: ${results.length}');
       if (mounted) setState(() => _results = results);
     } catch (e) {
       log.warn('work', 'Szabad fuvarok nem töltődtek be', e);

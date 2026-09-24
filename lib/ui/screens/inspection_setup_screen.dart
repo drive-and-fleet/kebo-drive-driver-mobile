@@ -4,6 +4,7 @@ import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import 'inspection_editor_screen.dart';
+import '../../logging/app_log.dart';
 
 class InspectionSetupScreen extends StatefulWidget {
   const InspectionSetupScreen({super.key, required this.services, required this.leg, required this.phase});
@@ -28,6 +29,7 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: ${widget.phase == 'PICKUP' ? 'átvételi' : 'leadási'} jegyzőkönyv indítása (${widget.leg.legKey})');
     _load();
   }
 

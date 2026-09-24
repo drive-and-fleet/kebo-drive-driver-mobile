@@ -46,6 +46,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: jegyzőkönyv szerkesztése ${widget.draftId} (szakasz ${widget.leg.legKey}, form ${widget.form.id})');
     _init();
   }
 

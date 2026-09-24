@@ -5,6 +5,7 @@ import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../widgets/leg_card.dart';
 import 'leg_detail_screen.dart';
+import '../../logging/app_log.dart';
 
 class MyWorkScreen extends StatefulWidget {
   const MyWorkScreen({super.key, required this.services});
@@ -60,6 +61,7 @@ class MyWorkScreenState extends State<MyWorkScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Munkáim');
     widget.services.sync.addListener(_refreshLocal);
     _load();
   }
@@ -82,6 +84,7 @@ class MyWorkScreenState extends State<MyWorkScreen> {
     setState(() => _loading = true);
     try {
       if (_view == _WorkView.active) {
+        if (refresh) log.info('ui', 'Munkáim frissítése');
         final legs = await widget.services.work.myWork(refreshOnline: refresh);
         if (mounted) setState(() => _legs = legs);
       } else {
@@ -99,12 +102,14 @@ class MyWorkScreenState extends State<MyWorkScreen> {
 
   void _switchView(_WorkView view) {
     if (view == _view) return;
+    log.info('ui', 'Munkáim nézet: ${view == _WorkView.active ? 'aktív' : 'teljesített'}');
     setState(() => _view = view);
     _load();
   }
 
   void _switchDays(int days) {
     if (days == _days) return;
+    log.info('ui', 'Teljesített időszak: $days nap');
     setState(() => _days = days);
     _load();
   }
@@ -142,7 +147,11 @@ class MyWorkScreenState extends State<MyWorkScreen> {
                   DropdownMenuItem(value: _SortOrder.pickupDesc, child: Text('Felvétel ideje – legutóbbi elöl')),
                   DropdownMenuItem(value: _SortOrder.plate, child: Text('Rendszám (A–Z)')),
                 ],
-                onChanged: (v) { if (v != null) setState(() => _sort[_view] = v); },
+                onChanged: (v) {
+                  if (v == null) return;
+                  log.info('ui', 'Rendezés: ${v.name}');
+                  setState(() => _sort[_view] = v);
+                },
               ),
             ),
           ]),
@@ -179,6 +188,7 @@ class MyWorkScreenState extends State<MyWorkScreen> {
               leg: leg,
               syncState: _syncStates[leg.legKey],
               onTap: () async {
+                log.info('ui', 'Fuvar megnyitva: ${leg.legKey} (${leg.orderNo} #${leg.sequenceNo}, ${leg.status})');
                 await Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey),
                 ));

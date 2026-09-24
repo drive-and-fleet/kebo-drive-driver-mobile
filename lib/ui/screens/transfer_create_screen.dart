@@ -21,6 +21,7 @@ class _TransferCreateScreenState extends State<TransferCreateScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Átadás másik sofőrnek (${widget.leg.legKey})');
     _load();
   }
 

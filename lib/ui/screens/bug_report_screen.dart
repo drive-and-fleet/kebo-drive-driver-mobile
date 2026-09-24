@@ -51,7 +51,8 @@ class _BugReportScreenState extends State<BugReportScreen> {
         title: const Text('Biztosan beküldöd?'),
         content: const Text(
           'A hibajelentéssel együtt elküldjük az alkalmazás naplóját is: mikor mit csináltál az appban, '
-          'a szinkron állapotát és a hibákat. Jelszó, fotó és aláírás nincs benne.',
+          'a hibákat, valamint a telefon állapotát (függő feltöltések, a telefonon lévő fuvarok és jegyzőkönyvek). '
+          'Jelszó, fotó és aláírás nincs benne.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
@@ -72,7 +73,19 @@ class _BugReportScreenState extends State<BugReportScreen> {
         final info = await PackageInfo.fromPlatform();
         version = '${info.version}+${info.buildNumber}';
       } catch (_) {}
-      final text = await AppLog.instance.collect();
+      final session = widget.services.auth.session;
+      String state;
+      try {
+        state = await widget.services.local.diagnostics();
+      } catch (e) {
+        state = 'Az állapot nem olvasható ki: $e\n';
+      }
+      final text = '${await AppLog.instance.collect()}'
+          '\n===== Állapot a beküldéskor (${DateTime.now().toUtc().toIso8601String()}) =====\n'
+          'App: ${version ?? '?'} · ${Platform.operatingSystem} ${Platform.operatingSystemVersion}\n'
+          'Munkamenet: sofőr ${session?.driverId ?? '-'}, felhasználó ${session?.userId ?? '-'}\n'
+          'Szinkron: ${widget.services.sync.running ? 'fut' : 'áll'}, függő: ${widget.services.sync.pending}\n'
+          '$state';
       final id = await widget.services.api.submitBugReport({
         'description': description,
         'logGzipBase64': base64Encode(gzip.encode(utf8.encode(text))),

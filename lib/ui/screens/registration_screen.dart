@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/app_services.dart';
+import '../../logging/app_log.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key, required this.services});
@@ -28,6 +29,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Regisztráció');
     _loadServices();
   }
 

@@ -19,6 +19,7 @@ class _TransfersScreenState extends State<TransfersScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Átadások');
     _load();
   }
 

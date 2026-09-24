@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 /// Az alkalmazás naplója: minden üzleti lépés és hiba egy sorban, időbélyeggel.
 ///
 /// A telefonon fájlba kerül (két, egyenként legfeljebb [maxFileBytes] méretű
-/// fájl váltja egymást), így egy hibajelentés a hibát megelőző munkát is
+/// fájl váltja egymást, együtt kb. 2 MB), így egy hibajelentés a hibát megelőző munkát is
 /// tartalmazza, akkor is, ha az app közben újraindult. Jelszó, token, fotó nem
 /// kerülhet bele: a hívók azonosítókat és állapotokat naplóznak, nem tartalmat.
 class AppLog {
@@ -17,7 +17,8 @@ class AppLog {
 
   static final AppLog instance = AppLog._();
 
-  static const maxFileBytes = 512 * 1024;
+  /// Két fájl váltja egymást, így kb. 2 MB (több napnyi munka) marad meg.
+  static const maxFileBytes = 1024 * 1024;
   static const _memoryLines = 400;
 
   File? _current;
