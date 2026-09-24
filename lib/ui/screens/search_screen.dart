@@ -23,6 +23,8 @@ class SearchScreenState extends State<SearchScreen> {
   bool _loading = true;
   bool _busy = false;
   String? _message;
+  /// Mikor jött utoljára friss lista a szerverről (a sofőr lássa, mennyire friss).
+  DateTime? _loadedAt;
 
   @override
   void initState() {
@@ -40,7 +42,7 @@ class SearchScreenState extends State<SearchScreen> {
     setState(() { _loading = true; _message = null; });
     try {
       final results = await widget.services.work.availableLegs(plate: _plate.text.trim());
-      if (mounted) setState(() => _results = results);
+      if (mounted) setState(() { _results = results; _loadedAt = DateTime.now(); });
     } catch (e) {
       if (mounted) setState(() => _message = 'A szabad fuvarok listája internetkapcsolatot igényel. $e');
     } finally {
@@ -67,11 +69,15 @@ class SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  static String _two(int v) => v.toString().padLeft(2, '0');
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        // Rövid listánál is le lehessen húzni a frissítéshez.
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
           Row(children: [
@@ -85,6 +91,20 @@ class SearchScreenState extends State<SearchScreen> {
             ),
             const SizedBox(width: 10),
             FilledButton(onPressed: _busy ? null : _load, child: const Text('Szűrés')),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: Text(
+                _loadedAt == null ? 'Még nincs betöltve' : 'Frissítve: ${_two(_loadedAt!.hour)}:${_two(_loadedAt!.minute)}',
+                style: const TextStyle(color: AppColors.ink600, fontSize: AppText.secondary),
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: _loading || _busy ? null : _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Frissítés'),
+            ),
           ]),
           if (_loading) const Padding(padding: EdgeInsets.only(top: 16), child: LinearProgressIndicator()),
           if (_message != null)
