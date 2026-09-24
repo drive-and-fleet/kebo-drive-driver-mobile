@@ -165,6 +165,25 @@ flutter devices
 flutter run -d <DEVICE_ID> --dart-define-from-file=config/dev.json
 ```
 
+## Indítás telefonon, a VPS-en futó rendszerrel
+
+A `config/vps.json` a https://drive.kebodev.hu-n futó Driver API-ra mutat (a Caddy
+a `/driver-api/` útvonalat adja tovább). Emulátor nem kell, a telefonon valódi
+internetkapcsolattal megy; a fotók a https://drive.kebodev.hu/fleet-private/... címre
+töltődnek fel.
+
+```bash
+flutter devices                                   # USB-n csatlakoztatott telefon
+flutter run -d <DEVICE_ID> --dart-define-from-file=config/vps.json
+
+# telepíthető APK a VPS-hez (pl. tesztelőknek):
+flutter build apk --release --dart-define-from-file=config/vps.json
+# eredmény: build/app/outputs/flutter-apk/app-release.apk
+```
+
+Android telefonon előbb kapcsold be a Fejlesztői beállítások → USB-hibakeresés
+opciót; iPhone-on Xcode-ban kell egyszer aláírni az alkalmazást (Signing & Capabilities).
+
 ## Production build
 
 ```bash
