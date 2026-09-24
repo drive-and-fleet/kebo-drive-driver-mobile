@@ -38,14 +38,18 @@ class LegCard extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(vehicle, style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
               ),
+              if (leg.isOutbound || leg.isReturn) Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _RoundTripTag(outbound: leg.isOutbound),
+              ),
               if (syncState != null) Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: SyncBadge(syncState),
               ),
               const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider(height: 1)),
-              _AddressLine(icon: Icons.trip_origin, label: 'Felvétel', address: leg.fromAddress, time: leg.plannedStart),
+              _AddressLine(icon: Icons.trip_origin, label: leg.isReturn ? 'Visszaindulás' : 'Felvétel', address: leg.fromAddress, time: leg.plannedStart),
               const SizedBox(height: 6),
-              _AddressLine(icon: Icons.flag_outlined, label: 'Leadás', address: leg.toAddress, time: leg.plannedEnd),
+              _AddressLine(icon: leg.isOutbound ? Icons.hourglass_top : Icons.flag_outlined, label: leg.isOutbound ? 'Várakozás' : 'Leadás', address: leg.toAddress, time: leg.plannedEnd),
               const SizedBox(height: 10),
               Row(children: [
                 Expanded(child: Text(
@@ -97,5 +101,27 @@ class _AddressLine extends StatelessWidget {
     final d = value.toLocal();
     return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')} '
         '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+/// „Körfuvar · odaút / visszaút” címke a fuvarkártyán.
+class _RoundTripTag extends StatelessWidget {
+  const _RoundTripTag({required this.outbound});
+  final bool outbound;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.tintAmber,
+        border: Border.all(color: AppColors.signalAmber),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        outbound ? 'Körfuvar · odaút – leadás után várj, és vidd vissza' : 'Körfuvar · visszaút',
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.ink900),
+      ),
+    );
   }
 }

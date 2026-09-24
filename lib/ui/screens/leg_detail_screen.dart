@@ -20,6 +20,8 @@ class LegDetailScreen extends StatefulWidget {
 
 class _LegDetailScreenState extends State<LegDetailScreen> {
   DriverLeg? _leg;
+  /// Körfuvar odaútjánál a visszaút, ha a telefonon van (ennél a sofőrnél).
+  DriverLeg? _returnLeg;
   LegSyncState? _syncState;
   bool _busy = true;
   String? _error;
@@ -45,9 +47,11 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
   Future<void> _load({bool quiet = false}) async {
     final leg = await widget.services.local.cachedLeg(widget.legKey);
     final syncState = (await widget.services.local.legSyncStates())[widget.legKey];
+    final returnLeg = leg == null ? null : await widget.services.local.returnLegFor(leg);
     if (!mounted) return;
     setState(() {
       _leg = leg;
+      _returnLeg = returnLeg;
       _syncState = syncState;
       if (!quiet) _busy = false;
     });
@@ -76,12 +80,53 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
         await Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: phase),
         ));
+        // Körfuvar: a leadás után a sofőr nem mehet el — megvárja az autót, és visszaviszi.
+        if (phase == 'DROPOFF' && leg.isOutbound) {
+          final closed = await widget.services.local.inspectionForLeg(leg.legKey, 'DROPOFF');
+          if (closed != null && closed.status != 'DRAFT' && mounted) await _showWaitDialog(leg);
+        }
       }
     } catch (e, stack) {
       log.error('work', 'Fuvar ${phase == 'PICKUP' ? 'indítása' : 'lezárása'} nem sikerült: ${leg.legKey}', e, stack);
       if (mounted) setState(() => _error = '$e');
     } finally {
       await _load();
+    }
+  }
+
+  static String _time(DateTime? t) {
+    if (t == null) return '';
+    final l = t.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(l.month)}.${two(l.day)}. ${two(l.hour)}:${two(l.minute)}';
+  }
+
+  Future<void> _showWaitDialog(DriverLeg outbound) async {
+    final back = await widget.services.local.returnLegFor(outbound);
+    log.info('work', 'Körfuvar: várakozás a leadás után (${outbound.legKey}), visszaút: ${back?.legKey ?? 'nincs a sofőrnél'}');
+    if (!mounted) return;
+    final open = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.hourglass_top, color: AppColors.signalAmber, size: 36),
+        title: const Text('Körfuvar – várakozás'),
+        content: Text(back == null
+            ? 'Ne menj el! Várd meg az autót itt: ${outbound.toAddress}.\n\nA visszaút még nincs kiosztva neked – szólj az irodának.'
+            : 'Ne menj el! Várd meg, amíg az autó elkészül itt: ${outbound.toAddress}.\n\n'
+                'Utána vidd vissza ide: ${back.toAddress}'
+                '${back.plannedStart == null ? '' : '\nTervezett visszaindulás: ${_time(back.plannedStart)}'}.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Rendben')),
+          if (back != null)
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Visszaút megnyitása')),
+        ],
+      ),
+    );
+    if (open == true && back != null && mounted) {
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => LegDetailScreen(services: widget.services, legKey: back.legKey),
+      ));
     }
   }
 
@@ -98,6 +143,10 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                 if (_busy) const Padding(padding: EdgeInsets.only(bottom: 12), child: LinearProgressIndicator()),
                 if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
                 _InfoCard(leg: leg),
+                if ((leg.isOutbound || leg.isReturn) && leg.status != 'COMPLETED' && leg.status != 'CANCELLED') ...[
+                  const SizedBox(height: 12),
+                  _RoundTripNotice(leg: leg, returnLeg: _returnLeg, time: _time),
+                ],
                 const SizedBox(height: 12),
                 SyncBadge(_syncState, detailed: true),
                 const SizedBox(height: 16),
@@ -171,6 +220,50 @@ class _InfoCard extends StatelessWidget {
           ],
         ]),
       ),
+    );
+  }
+}
+
+/// Körfuvar jelzése az adatlapon: odaútnál, hogy a leadás után meg kell várni az
+/// autót és vissza kell vinni; visszaútnál, hogy honnan és hová.
+class _RoundTripNotice extends StatelessWidget {
+  const _RoundTripNotice({required this.leg, required this.returnLeg, required this.time});
+  final DriverLeg leg;
+  final DriverLeg? returnLeg;
+  final String Function(DateTime?) time;
+
+  @override
+  Widget build(BuildContext context) {
+    final String title;
+    final String text;
+    if (leg.isOutbound) {
+      title = 'Körfuvar · odaút';
+      text = returnLeg == null
+          ? 'A leadás után ne menj el: várd meg az autót itt: ${leg.toAddress}. '
+              'A visszaút még nincs kiosztva neked – szólj az irodának.'
+          : 'A leadás után ne menj el: várd meg, amíg az autó elkészül itt: ${leg.toAddress}, '
+              'majd vidd vissza ide: ${returnLeg!.toAddress}'
+              '${returnLeg!.plannedStart == null ? '' : ' (tervezett visszaindulás: ${time(returnLeg!.plannedStart)})'}.';
+    } else {
+      title = 'Körfuvar · visszaút';
+      text = 'Az autót innen viszed vissza: ${leg.fromAddress} → ${leg.toAddress}.';
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.tintAmber,
+        border: Border.all(color: AppColors.signalAmber),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Icon(Icons.sync_alt, color: AppColors.signalAmber),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: AppText.body, color: AppColors.ink900)),
+          const SizedBox(height: 4),
+          Text(text, style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink900)),
+        ])),
+      ]),
     );
   }
 }

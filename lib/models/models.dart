@@ -66,6 +66,8 @@ class DriverLeg {
     this.toContactName,
     this.toContactPhone,
     this.legCount,
+    this.fromStopType,
+    this.toStopType,
   });
 
   final String? legId;
@@ -95,6 +97,17 @@ class DriverLeg {
   /// listájában jön a szervertől, a lokális cache-ben nincs eltárolva.
   final int? legCount;
 
+  /// A két végpont megállótípusa (PICKUP, DROPOFF, WAIT, régi adatban INTERMEDIATE).
+  final String? fromStopType;
+  final String? toStopType;
+
+  /// Körfuvar odaútja: a cél egy várakozó megálló, ahol a sofőr megvárja az autót,
+  /// és onnan viszi tovább (visszaút).
+  bool get isOutbound => toStopType == 'WAIT';
+
+  /// Körfuvar visszaútja: a várakozó megállóból indul.
+  bool get isReturn => fromStopType == 'WAIT';
+
   factory DriverLeg.fromJson(Map<String, dynamic> json) => DriverLeg(
         legId: json['legId']?.toString(),
         legKey: '${json['legKey']}',
@@ -119,6 +132,8 @@ class DriverLeg {
         toContactName: json['toContactName']?.toString(),
         toContactPhone: json['toContactPhone']?.toString(),
         legCount: int.tryParse('${json['legCount'] ?? ''}'),
+        fromStopType: json['fromStopType']?.toString(),
+        toStopType: json['toStopType']?.toString(),
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -144,6 +159,8 @@ class DriverLeg {
         'from_contact_phone': fromContactPhone,
         'to_contact_name': toContactName,
         'to_contact_phone': toContactPhone,
+        'from_stop_type': fromStopType,
+        'to_stop_type': toStopType,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -170,6 +187,8 @@ class DriverLeg {
         fromContactPhone: json['from_contact_phone']?.toString(),
         toContactName: json['to_contact_name']?.toString(),
         toContactPhone: json['to_contact_phone']?.toString(),
+        fromStopType: json['from_stop_type']?.toString(),
+        toStopType: json['to_stop_type']?.toString(),
       );
 
   DriverLeg copyWithStatus(String newStatus) => DriverLeg(
@@ -196,6 +215,8 @@ class DriverLeg {
         toContactName: toContactName,
         toContactPhone: toContactPhone,
         legCount: legCount,
+        fromStopType: fromStopType,
+        toStopType: toStopType,
       );
 }
 

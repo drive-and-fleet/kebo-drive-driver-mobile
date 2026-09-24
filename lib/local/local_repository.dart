@@ -44,6 +44,21 @@ class LocalRepository {
     return rows.map(DriverLeg.fromCacheMap).toList();
   }
 
+  /// Körfuvar: az odaút ([outbound]) visszaútja, ha a telefonon van (vagyis ennél
+  /// a sofőrnél): ugyanaz a jármű, a várakozó megállóból induló következő szakasz.
+  Future<DriverLeg?> returnLegFor(DriverLeg outbound) async {
+    if (!outbound.isOutbound) return null;
+    final db = await _db;
+    final rows = await db.query(
+      'cached_leg',
+      where: "order_vehicle_id = ? AND sequence_no > ? AND from_stop_type = 'WAIT' AND status != 'CANCELLED'",
+      whereArgs: [outbound.orderVehicleId, outbound.sequenceNo],
+      orderBy: 'sequence_no',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : DriverLeg.fromCacheMap(rows.first);
+  }
+
   Future<DriverLeg?> cachedLeg(String legKey) async {
     final db = await _db;
     final rows = await db.query('cached_leg', where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
