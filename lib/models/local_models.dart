@@ -188,3 +188,43 @@ class SyncOperation {
 
 /// Egy szakasz szinkronállapota a sofőrnek: mi van még csak a telefonon.
 enum LegSyncState { synced, pending, running, error, conflict }
+
+/// Az egyetlen jegyzőkönyv, amiből másolni lehet: ugyanannak az autónak a
+/// közvetlenül előző jegyzőkönyve ugyanazon a megrendelésen belül.
+class CopySource {
+  const CopySource({
+    this.serverId,
+    this.localId,
+    required this.inspectionType,
+    required this.sameLeg,
+    this.legSequenceNo,
+    this.at,
+    this.synced = true,
+  });
+
+  /// Szerverről letöltött forrás.
+  final String? serverId;
+  /// A telefonon rögzített forrás (offline is másolható).
+  final String? localId;
+  final String inspectionType;
+  /// Igaz: ugyanennek a szakasznak az átvételi jegyzőkönyve.
+  final bool sameLeg;
+  final int? legSequenceNo;
+  final DateTime? at;
+  final bool synced;
+
+  String get label {
+    final what = sameLeg
+        ? 'Ennek a szakasznak az átvételi jegyzőkönyve'
+        : legSequenceNo != null
+            ? 'A(z) $legSequenceNo. szakasz leadási jegyzőkönyve'
+            : 'Az előző szakasz leadási jegyzőkönyve';
+    final when = at == null ? '' : ' • ${_format(at!.toLocal())}';
+    return '$what$when${synced ? '' : ' (még nincs feltöltve)'}';
+  }
+
+  static String _format(DateTime t) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${t.year}.${two(t.month)}.${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
+  }
+}

@@ -30,8 +30,32 @@ class MyWorkScreenState extends State<MyWorkScreen> {
   int _days = 30;
   bool _completedFromServer = true;
 
-  List<DriverLeg> get _visibleLegs =>
-      _view == _WorkView.active ? _legs.where((l) => l.status != 'COMPLETED').toList() : _completed;
+  /// Nézetenként külön rendezés: aktívnál a legközelebbi felvétel elöl, a
+  /// teljesítetteknél a legutóbbi.
+  final Map<_WorkView, _SortOrder> _sort = {_WorkView.active: _SortOrder.pickupAsc, _WorkView.completed: _SortOrder.pickupDesc};
+
+  List<DriverLeg> get _visibleLegs {
+    final legs = _view == _WorkView.active ? _legs.where((l) => l.status != 'COMPLETED').toList() : [..._completed];
+    int byPickup(DriverLeg a, DriverLeg b) {
+      final x = a.plannedStart, y = b.plannedStart;
+      if (x == null && y == null) return 0;
+      if (x == null) return 1; // időpont nélküliek a végére
+      if (y == null) return -1;
+      return x.compareTo(y);
+    }
+    switch (_sort[_view]!) {
+      case _SortOrder.pickupAsc:
+        legs.sort(byPickup);
+      case _SortOrder.pickupDesc:
+        legs.sort((a, b) => a.plannedStart == null || b.plannedStart == null ? byPickup(a, b) : byPickup(b, a));
+      case _SortOrder.plate:
+        legs.sort((a, b) {
+          final c = a.registrationNumber.toUpperCase().compareTo(b.registrationNumber.toUpperCase());
+          return c != 0 ? c : byPickup(a, b);
+        });
+    }
+    return legs;
+  }
 
   @override
   void initState() {
@@ -106,6 +130,22 @@ class MyWorkScreenState extends State<MyWorkScreen> {
               onSelectionChanged: (selection) => _switchView(selection.first),
             ),
           ),
+          Row(children: [
+            const Text('Rendezés:'),
+            const SizedBox(width: 12),
+            Expanded(
+              child: DropdownButton<_SortOrder>(
+                isExpanded: true,
+                value: _sort[_view],
+                items: const [
+                  DropdownMenuItem(value: _SortOrder.pickupAsc, child: Text('Felvétel ideje – legkorábbi elöl')),
+                  DropdownMenuItem(value: _SortOrder.pickupDesc, child: Text('Felvétel ideje – legutóbbi elöl')),
+                  DropdownMenuItem(value: _SortOrder.plate, child: Text('Rendszám (A–Z)')),
+                ],
+                onChanged: (v) { if (v != null) setState(() => _sort[_view] = v); },
+              ),
+            ),
+          ]),
           if (completed) ...[
             Wrap(
               spacing: 8,
@@ -152,3 +192,5 @@ class MyWorkScreenState extends State<MyWorkScreen> {
 }
 
 enum _WorkView { active, completed }
+
+enum _SortOrder { pickupAsc, pickupDesc, plate }

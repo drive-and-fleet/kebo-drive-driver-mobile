@@ -201,7 +201,7 @@ class LocalRepository {
           'form_type_id': '${inspection['formTypeId']}',
           'inspection_type': '${inspection['inspectionType']}',
           'completed_at': inspection['completedAt']?.toString(),
-        });
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
         for (final valueRaw in (item['values'] as List? ?? const [])) {
           final value = Map<String, dynamic>.from(valueRaw as Map);
           await txn.insert('previous_value', {
@@ -213,7 +213,7 @@ class LocalRepository {
             'value_boolean': value['valueBoolean'] == null ? null : (value['valueBoolean'] == true ? 1 : 0),
             'value_date': value['valueDate']?.toString(),
             'value_datetime': value['valueDatetime']?.toString(),
-          });
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         for (final optionRaw in (item['options'] as List? ?? const [])) {
           final option = Map<String, dynamic>.from(optionRaw as Map);
@@ -232,7 +232,7 @@ class LocalRepository {
             'description': '${damage['description'] ?? ''}',
             'severity': damage['severity']?.toString(),
             'is_preexisting': damage['isPreexisting'] == null ? null : (damage['isPreexisting'] == true ? 1 : 0),
-          });
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         for (final photoRaw in (item['photos'] as List? ?? const [])) {
           final photo = Map<String, dynamic>.from(photoRaw as Map);
@@ -243,7 +243,7 @@ class LocalRepository {
             'photo_type': '${photo['photoType']}',
             'storage_key': photo['storageKey']?.toString(),
             'captured_at': photo['capturedAt']?.toString(),
-          });
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
       }
     });
@@ -278,15 +278,67 @@ class LocalRepository {
 
   /// A szakasz lokálisan már kitöltött jegyzőkönyvei — ezekből offline is lehet
   /// másolni, akkor is, ha a szinkron még nem futott le.
-  Future<List<LocalInspectionDraft>> localInspectionsForCopy(String legKey, String phase) async {
+  /// Az egyetlen másolható forrás [phase]-hez ([leg] szakaszon): leadásnál a
+  /// szakasz saját átvételi jegyzőkönyve, átvételnél az autó előző (nem lemondott)
+  /// szakaszának leadási jegyzőkönyve. A telefonon rögzített példány elsőbbséget
+  /// kap, így internet nélkül is másolható; ha nincs, a szerverről letöltött.
+  Future<CopySource?> copySourceFor(DriverLeg leg, String phase) async {
     final db = await _db;
-    final rows = await db.query(
-      'local_inspection',
-      where: 'leg_key = ? AND inspection_type = ? AND status IN (?, ?)',
-      whereArgs: [legKey, phase, 'COMPLETED_LOCAL', 'SYNCED'],
-      orderBy: 'updated_at DESC',
+    final sourceType = phase == 'DROPOFF' ? 'PICKUP' : 'DROPOFF';
+    String? sourceLegKey;
+    int? sourceSequenceNo;
+    if (phase == 'DROPOFF') {
+      sourceLegKey = leg.legKey;
+      sourceSequenceNo = leg.sequenceNo;
+    } else {
+      final previous = await db.query(
+        'cached_leg',
+        columns: ['leg_key', 'sequence_no'],
+        where: 'order_vehicle_id = ? AND sequence_no < ? AND status != ?',
+        whereArgs: [leg.orderVehicleId, leg.sequenceNo, 'CANCELLED'],
+        orderBy: 'sequence_no DESC',
+        limit: 1,
+      );
+      if (previous.isNotEmpty) {
+        sourceLegKey = '${previous.first['leg_key']}';
+        sourceSequenceNo = previous.first['sequence_no'] as int?;
+      }
+    }
+    if (sourceLegKey != null) {
+      final local = await db.query(
+        'local_inspection',
+        where: 'leg_key = ? AND inspection_type = ? AND status IN (?, ?)',
+        whereArgs: [sourceLegKey, sourceType, 'COMPLETED_LOCAL', 'SYNCED'],
+        orderBy: 'updated_at DESC',
+        limit: 1,
+      );
+      if (local.isNotEmpty) {
+        final draft = LocalInspectionDraft.fromMap(local.first);
+        return CopySource(
+          localId: draft.localId,
+          inspectionType: sourceType,
+          sameLeg: phase == 'DROPOFF',
+          legSequenceNo: sourceSequenceNo,
+          at: draft.updatedAt,
+          synced: draft.status == 'SYNCED',
+        );
+      }
+    }
+    final server = await db.query(
+      'previous_inspection',
+      where: 'leg_key = ? AND inspection_type = ?',
+      whereArgs: [leg.legKey, sourceType],
+      orderBy: 'completed_at DESC',
+      limit: 1,
     );
-    return rows.map(LocalInspectionDraft.fromMap).toList();
+    if (server.isEmpty) return null;
+    return CopySource(
+      serverId: '${server.first['server_id']}',
+      inspectionType: sourceType,
+      sameLeg: phase == 'DROPOFF',
+      legSequenceNo: sourceSequenceNo,
+      at: server.first['completed_at'] == null ? null : DateTime.tryParse('${server.first['completed_at']}'),
+    );
   }
 
   /// Csak DRAFT-ot folytat: a lezárt jegyzőkönyv nem nyílik újra szerkesztésre.
