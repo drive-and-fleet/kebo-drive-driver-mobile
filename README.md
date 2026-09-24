@@ -184,6 +184,28 @@ flutter build apk --release --dart-define-from-file=config/vps.json
 Android telefonon előbb kapcsold be a Fejlesztői beállítások → USB-hibakeresés
 opciót; iPhone-on Xcode-ban kell egyszer aláírni az alkalmazást (Signing & Capabilities).
 
+## Alkalmazás neve és ikonja
+
+- Név: **Drive and Fleet Sofőr** (`android/app/src/main/AndroidManifest.xml` → `android:label`,
+  `ios/Runner/Info.plist` → `CFBundleDisplayName`, `lib/app.dart` → `title`).
+- Ikon: a forrás az `assets/icon/` mappában (`icon.svg` → `icon.png` a teljes ikon,
+  `icon_foreground.*` az Android adaptív ikon előtere, háttérszín `#0C1820`).
+  Módosítás után az összes méret újragenerálása:
+
+  ```bash
+  flutter pub add --dev flutter_launcher_icons
+  cat >> pubspec.yaml <<'YAML'
+  flutter_launcher_icons:
+    android: "ic_launcher"
+    ios: true
+    image_path: "assets/icon/icon.png"
+    adaptive_icon_background: "#0C1820"
+    adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+    remove_alpha_ios: true
+  YAML
+  dart run flutter_launcher_icons
+  ```
+
 ## Production build
 
 ```bash

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><g transform="translate(512 512) scale(1.14) translate(-512 -562)">  <!-- út -->
+  <rect x="150" y="742" width="724" height="26" rx="13" fill="#F2B233"/>
+  <!-- karosszéria (jobbra néz) -->
+  <path d="M168 646 V566 Q168 522 212 514 L330 492 L418 382 Q440 356 478 356 H636 Q676 356 702 384 L790 488 L832 496 Q862 502 862 544 V646 Q862 668 840 668 H190 Q168 668 168 646 Z" fill="#FFFFFF"/>
+  <!-- ablakok -->
+  <path d="M456 394 H564 V488 H382 Z" fill="#0C1820"/>
+  <path d="M592 394 H652 Q672 394 686 410 L750 488 H592 Z" fill="#0C1820"/>
+  <!-- fényszóró, hátsó lámpa -->
+  <rect x="826" y="560" width="36" height="24" rx="6" fill="#F2B233"/>
+  <rect x="168" y="560" width="22" height="24" rx="5" fill="#E5484D"/>
+  <!-- kerekek -->
+  <circle cx="330" cy="668" r="92" fill="#0C1820"/>
+  <circle cx="330" cy="668" r="68" fill="#FFFFFF"/>
+  <circle cx="330" cy="668" r="26" fill="#0C1820"/>
+  <circle cx="702" cy="668" r="92" fill="#0C1820"/>
+  <circle cx="702" cy="668" r="68" fill="#FFFFFF"/>
+  <circle cx="702" cy="668" r="26" fill="#0C1820"/>
+</g></svg>

@@ -44,6 +44,15 @@ class InspectionValidator {
       if (count == 0) errors.add('A sérüléshez nincs fotó: ${damage.description}');
     }
 
+    // Aláírás nélkül nem zárható le: az átadó (átvételnél) vagy az átvevő (leadásnál)
+    // szignója igazolja a jegyzőkönyvet. A szerver ugyanezt ellenőrzi.
+    final signatures = await _local.signatures(draft.localId);
+    if (signatures.isEmpty) {
+      errors.add(draft.inspectionType == 'PICKUP'
+          ? 'Hiányzó aláírás: az átadó szignója kötelező (Szignó gomb).'
+          : 'Hiányzó aláírás: az átvevő szignója kötelező (Szignó gomb).');
+    }
+
     return InspectionValidationResult(errors);
   }
 

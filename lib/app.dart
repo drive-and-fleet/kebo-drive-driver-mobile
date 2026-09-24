@@ -44,7 +44,7 @@ class _FleetDriverAppState extends State<FleetDriverApp> with WidgetsBindingObse
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Fleet Driver',
+      title: 'Drive and Fleet Sofőr',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       home: widget.services.auth.isSignedIn
