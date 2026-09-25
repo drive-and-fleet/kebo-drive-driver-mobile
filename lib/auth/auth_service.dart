@@ -143,9 +143,11 @@ class AuthService extends ChangeNotifier {
     return raw.map((e) => ServiceOrgOption.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
-  /// E-mail/jelszó regisztráció a választott sofőrszolgálathoz. A sofőr PENDING
-  /// marad, amíg a szolgálat ügyintézője jóvá nem hagyja.
-  Future<String> registerWithPassword({
+  /// E-mail/jelszó regisztráció a választott sofőrszolgálathoz. Előbb a kapott
+  /// e-mailben lévő linkkel meg kell erősíteni a címet, utána a szolgálat
+  /// ügyintézője hagyja jóvá. Visszaadja a szolgálat nevét és a címet, ahová a
+  /// megerősítő levél megy.
+  Future<({String serviceName, String sentTo})> registerWithPassword({
     required String email,
     required String password,
     required String firstName,
@@ -164,7 +166,16 @@ class AuthService extends ChangeNotifier {
       if (phone?.trim().isNotEmpty == true) 'phone': phone!.trim(),
       if (licenseNumber?.trim().isNotEmpty == true) 'licenseNumber': licenseNumber!.trim(),
     }) as Map<String, dynamic>;
-    return '${result['serviceOrgName']}';
+    log.info('auth', 'Regisztráció rögzítve, megerősítő e-mail sorba állítva');
+    return (serviceName: '${result['serviceOrgName']}', sentTo: '${result['verificationSentTo'] ?? email.trim()}');
+  }
+
+  /// "Elfelejtett jelszó": ha van ilyen fiók, e-mailben jön egy link a webes
+  /// új-jelszó oldalra. A szerver válasza mindig ugyanaz (nem árulja el, hogy a
+  /// cím regisztrálva van-e).
+  Future<void> requestPasswordReset(String email) async {
+    log.info('auth', 'Jelszó-visszaállítás kérése');
+    await _http.post('/api/v1/driver/auth/password-reset', body: {'email': email.trim()});
   }
 
   /// E-mail/jelszó bejelentkezés a Driver API-val, Firebase nélkül.
@@ -199,10 +210,11 @@ class AuthService extends ChangeNotifier {
       if (phone?.trim().isNotEmpty == true) 'phone': phone!.trim(),
       if (licenseNumber?.trim().isNotEmpty == true) 'licenseNumber': licenseNumber!.trim(),
     }) as Map<String, dynamic>;
-    throw DriverPendingException(
-      'A regisztráció rögzítve. System admin jóváhagyás szükséges. '
-      'Státusz: ${result['userStatus']}/${result['driverStatus']}',
-    );
+    final sentTo = result['verificationSentTo'];
+    throw DriverPendingException(sentTo == null
+        ? 'A regisztráció rögzítve. A sofőrszolgálat jóváhagyása után be tudsz lépni.'
+        : 'A regisztráció rögzítve. Küldtünk egy megerősítő e-mailt ide: $sentTo. '
+            'Kattints a benne lévő linkre; utána a sofőrszolgálat jóváhagyása következik.');
   }
 
   /// A helyi (offline) munka soha nem függhet a hálózattól, ezért ez csak akkor

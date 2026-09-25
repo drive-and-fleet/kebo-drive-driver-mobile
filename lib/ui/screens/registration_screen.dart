@@ -66,7 +66,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     }
     setState(() => _busy = true);
     try {
-      final serviceName = await widget.services.auth.registerWithPassword(
+      final result = await widget.services.auth.registerWithPassword(
         email: _email.text,
         password: _password.text,
         firstName: _firstName.text,
@@ -79,8 +79,13 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('Regisztráció elküldve'),
-          content: Text('A regisztrációt elküldtük a(z) $serviceName részére. Amint jóváhagyják, be tudsz lépni ugyanezzel az e-maillel és jelszóval.'),
+          title: const Text('Nézd meg az e-mailjeidet'),
+          content: Text(
+            'Küldtünk egy megerősítő e-mailt ide: ${result.sentTo}\n\n'
+            '1. Kattints a levélben lévő „E-mail-cím megerősítése” gombra (ha nem találod, nézd meg a levélszemét mappát is).\n'
+            '2. Utána a(z) ${result.serviceName} jóváhagyja a regisztrációdat.\n'
+            '3. Ezután be tudsz lépni ugyanezzel az e-maillel és jelszóval.',
+          ),
           actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
         ),
       );
@@ -101,7 +106,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const Text('A regisztráció után a kiválasztott sofőrszolgálat ügyintézőjének jóváhagyása szükséges.'),
+            const Text('A regisztráció után e-mailt kapsz egy megerősítő linkkel; a megerősítés után a kiválasztott sofőrszolgálat ügyintézője hagyja jóvá a regisztrációdat.'),
             const SizedBox(height: 20),
             TextFormField(controller: _lastName, decoration: const InputDecoration(labelText: 'Vezetéknév'), validator: _required),
             const SizedBox(height: 12),

@@ -44,6 +44,55 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// E-mail-cím bekérése, majd a webes új-jelszó oldal linkjének kérése.
+  Future<void> _forgotPassword() async {
+    final controller = TextEditingController(text: _email.text.trim());
+    final email = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Elfelejtett jelszó'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Add meg a fiókod e-mail-címét: küldünk egy linket, amellyel új jelszót állíthatsz be.'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            decoration: const InputDecoration(labelText: 'E-mail'),
+            autofocus: true,
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Mégse')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Link küldése')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (email == null || !mounted) return;
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      setState(() => _error = 'Adj meg egy érvényes e-mail-címet.');
+      return;
+    }
+    try {
+      await widget.services.auth.requestPasswordReset(email);
+      if (!mounted) return;
+      setState(() => _error = null);
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Nézd meg az e-mailjeidet'),
+          content: Text('Ha van fiók ezzel a címmel ($email), pár percen belül érkezik egy levél. '
+              'A benne lévő gombbal új jelszót adhatsz meg (a link 60 percig érvényes), utána azzal lépj be itt. '
+              'Ha nem találod, nézd meg a levélszemét mappát is.'),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+        ),
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = 'A kérést most nem sikerült elküldeni. Van internet? ($e)');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final busy = widget.services.auth.busy;
@@ -95,7 +144,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               : () => _login(() => widget.services.auth.signInPassword(_email.text, _password.text)),
                           child: const Text('Belépés'),
                         ),
-                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: busy ? null : _forgotPassword,
+                            child: const Text('Elfelejtett jelszó?'),
+                          ),
+                        ),
                         OutlinedButton(
                           onPressed: busy
                               ? null
