@@ -18,7 +18,7 @@ class DynamicField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = '${field.name}${field.required ? ' *' : ''}${field.unit == null ? '' : ' (${field.unit})'}';
+    final label = '${field.name}${field.required ? ' *' : ''}';
     switch (field.dataType) {
       case 'BOOLEAN':
         return Card(

@@ -10,6 +10,7 @@ class LocalInspectionDraft {
     this.serverId,
     this.copyFromServerId,
     this.copyFromLocalId,
+    this.generalNote,
   });
 
   final String localId;
@@ -21,6 +22,8 @@ class LocalInspectionDraft {
   /// Lokális forrás: a feltöltéskor ennek a szerveroldali példányából másol a szerver.
   final String? copyFromLocalId;
   final String status;
+  /// „Általános megjegyzés”; a másolás ezt is viszi.
+  final String? generalNote;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -33,6 +36,7 @@ class LocalInspectionDraft {
         copyFromServerId: row['copy_from_server_id']?.toString(),
         copyFromLocalId: row['copy_from_local_id']?.toString(),
         status: '${row['status']}',
+        generalNote: row['general_note']?.toString(),
         createdAt: DateTime.parse('${row['created_at']}'),
         updatedAt: DateTime.parse('${row['updated_at']}'),
       );
@@ -160,16 +164,19 @@ class SyncOperation {
     required this.createdAt,
     required this.updatedAt,
     this.lastError,
+    this.payload,
   });
 
   final String id;
   final String operationType;
   final String entityId;
-  /// A szakasz, amelyhez a művelet tartozik — a sorrendiség ezen belül kötelező.
+  /// Az út, amelyhez a művelet tartozik — a sorrendiség ezen belül kötelező.
   final String? legKey;
   final String state;
   final int attempts;
   final String? lastError;
+  /// A művelet adatai JSON-ban (új fuvar, az autó módosított mezői).
+  final String? payload;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -178,6 +185,7 @@ class SyncOperation {
         operationType: '${row['operation_type']}',
         entityId: '${row['entity_id']}',
         legKey: row['leg_key']?.toString(),
+        payload: row['payload']?.toString(),
         state: '${row['state']}',
         attempts: row['attempts'] as int? ?? 0,
         lastError: row['last_error']?.toString(),
@@ -186,7 +194,7 @@ class SyncOperation {
       );
 }
 
-/// Egy szakasz szinkronállapota a sofőrnek: mi van még csak a telefonon.
+/// Egy út szinkronállapota a sofőrnek: mi van még csak a telefonon.
 enum LegSyncState { synced, pending, running, error, conflict }
 
 /// Az egyetlen jegyzőkönyv, amiből másolni lehet: ugyanannak az autónak a
@@ -207,7 +215,7 @@ class CopySource {
   /// A telefonon rögzített forrás (offline is másolható).
   final String? localId;
   final String inspectionType;
-  /// Igaz: ugyanennek a szakasznak az átvételi jegyzőkönyve.
+  /// Igaz: ugyanennek az útnak az átvételi jegyzőkönyve.
   final bool sameLeg;
   final int? legSequenceNo;
   final DateTime? at;
@@ -215,10 +223,10 @@ class CopySource {
 
   String get label {
     final what = sameLeg
-        ? 'Ennek a szakasznak az átvételi jegyzőkönyve'
+        ? 'Ennek az útnak az átvételi jegyzőkönyve'
         : legSequenceNo != null
-            ? 'A(z) $legSequenceNo. szakasz leadási jegyzőkönyve'
-            : 'Az előző szakasz leadási jegyzőkönyve';
+            ? 'A(z) $legSequenceNo. út leadási jegyzőkönyve'
+            : 'Az előző út leadási jegyzőkönyve';
     final when = at == null ? '' : ' • ${_format(at!.toLocal())}';
     return '$what$when${synced ? '' : ' (még nincs feltöltve)'}';
   }

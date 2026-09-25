@@ -44,7 +44,13 @@ class SearchScreenState extends State<SearchScreen> {
     try {
       final results = await widget.services.work.availableLegs(plate: _plate.text.trim());
       log.info('work', 'Szabad fuvarok: ${results.length}');
-      if (mounted) setState(() => _results = results);
+      // Egy autó útjai egymás után (körfuvarnál az odaút elöl), az autók indulás szerint.
+      final grouped = groupByVehicle(results, (a, b) {
+        final x = a.plannedStart, y = b.plannedStart;
+        if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+        return x.compareTo(y);
+      });
+      if (mounted) setState(() => _results = grouped);
     } catch (e) {
       log.warn('work', 'Szabad fuvarok nem töltődtek be', e);
       if (mounted) setState(() => _message = 'A szabad fuvarok listája internetkapcsolatot igényel. $e');
@@ -120,7 +126,13 @@ class SearchScreenState extends State<SearchScreen> {
             LegCard(
               leg: leg,
               onTap: () {},
-              trailing: FilledButton(onPressed: _busy ? null : () => _claim(leg), child: const Text('Felveszem')),
+              // Az utak sorban mennek: az előző út teljesülése előtt ez nem vehető fel.
+              trailing: leg.waitsForPreviousLeg
+                  ? const Flexible(
+                      child: Text('Előbb az előző útnak kell teljesülnie',
+                          textAlign: TextAlign.right, style: TextStyle(fontSize: 13, color: AppColors.ink600)),
+                    )
+                  : FilledButton(onPressed: _busy ? null : () => _claim(leg), child: const Text('Felveszem')),
             ),
         ],
       ),

@@ -18,7 +18,7 @@ import 'sync_service.dart';
 /// Automatikus frissítés, akkumulátorkímélően: csak amíg az app előtérben van,
 /// [_autoInterval]-onként, valamint amikor az app újra előtérbe kerül, és amikor
 /// visszajön a hálózat — de legfeljebb [_minGap]-enként, és egyetlen kis kéréssel
-/// (űrlapot és előzményt csak az újonnan kapott szakaszokhoz tölt le).
+/// (űrlapot és előzményt csak az újonnan kapott utakhoz tölt le).
 class WorkService extends ChangeNotifier {
   WorkService(this.api, this.local, this.sync);
   final DriverApi api;
@@ -86,7 +86,7 @@ class WorkService extends ChangeNotifier {
     await local.cacheLegs(online);
     final result = await local.reconcileAssigned({for (final leg in online) leg.legKey}, fetchedAt);
     final fresh = online.where((leg) => !known.contains(leg.legKey)).toList();
-    log.info('work', 'Munkák letöltve ($why): ${online.length} szakasz, új: ${fresh.length}, '
+    log.info('work', 'Munkák letöltve ($why): ${online.length} út, új: ${fresh.length}, '
         'eltűnt: ${result.removed.length}${result.revoked.isEmpty ? '' : ', már nem a sofőré, de helyi munka van rajta: ${result.revoked.join(', ')}'}');
     if (result.removed.isNotEmpty) log.info('work', 'A telefonról törölve (lemondva / visszavéve / átadva): ${result.removed.join(', ')}');
 
@@ -117,7 +117,7 @@ class WorkService extends ChangeNotifier {
       }
     }
     final legs = await local.cachedLegs();
-    log.debug('work', 'Munkáim: ${legs.length} szakasz a telefonon');
+    log.debug('work', 'Munkáim: ${legs.length} út a telefonon');
     return legs;
   }
 
@@ -144,6 +144,65 @@ class WorkService extends ChangeNotifier {
     return (legs: legs, fromServer: fromServer);
   }
 
+  /// A sofőr javítja az út autójának adatait (rendszám, használó e-mail, további cím).
+  /// Azonnal a telefonon, a szerverre a szinkron viszi (csak a módosított mezőket).
+  Future<bool> updateLegVehicle(DriverLeg leg, {String? registrationNumber, String? userEmail, String? extraEmail}) async {
+    final changed = await local.updateLegVehicle(leg.legKey, registrationNumber: registrationNumber, userEmail: userEmail, extraEmail: extraEmail);
+    if (changed) {
+      log.info('work', 'Autó adatai módosítva a telefonon: ${leg.legKey} (szinkronra vár)');
+      notifyListeners();
+      unawaited(sync.run());
+    }
+    return changed;
+  }
+
+  /// Új fuvar a telefonon: azonnal a Munkáim között, a szinkron hozza létre a szerveren.
+  Future<String> createOrder(Map<String, dynamic> payload, {required String fleetName}) async {
+    final legKey = await local.createLocalOrder(payload, fleetName: fleetName);
+    log.info('work', 'Új fuvar a telefonon: $legKey (${payload['registrationNumber']}, $fleetName) — szinkronra vár');
+    notifyListeners();
+    unawaited(sync.run());
+    // A jegyzőkönyvhöz kell a szolgálat űrlapja: ha még nincs a telefonon, most letöltjük (hálózattal).
+    final serviceId = '${payload['serviceOrgId']}';
+    unawaited(() async {
+      try {
+        if (!await local.hasForms(serviceId)) await local.cacheForms(serviceId, await api.forms(serviceId));
+      } catch (e) {
+        log.warn('work', 'Az űrlap letöltése most nem sikerült ($serviceId)', e);
+      }
+    }());
+    return legKey;
+  }
+
+  /// A sofőr szolgálatai: hálózattal frissen, offline a legutóbb letöltött lista.
+  Future<List<Map<String, String>>> myServices() async {
+    try {
+      await local.cacheServices(await api.myServices());
+    } catch (e) {
+      log.warn('work', 'A szolgálatok listája nem frissült, a telefonon tárolt látszik', e);
+    }
+    return local.services();
+  }
+
+  /// A szolgálat flottakezelő partnerei: hálózattal frissen, offline a tárolt lista.
+  Future<List<Map<String, String>>> fleets(String serviceOrgId) async {
+    try {
+      await local.cacheFleets(serviceOrgId, await api.fleets(serviceOrgId));
+    } catch (e) {
+      log.warn('work', 'A partnerek listája nem frissült, a telefonon tárolt látszik', e);
+    }
+    return local.fleets(serviceOrgId);
+  }
+
+  /// Amit a szolgálat gépjármű-nyilvántartása tud a rendszámról (csak hálózattal; különben null).
+  Future<Map<String, dynamic>?> lookupVehicle(String serviceOrgId, String plate) async {
+    try {
+      return await api.lookupVehicle(serviceOrgId, plate);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// `plate` nélkül a szabad fuvarok teljes böngészhető listáját adja vissza.
   Future<List<DriverLeg>> availableLegs({String? plate}) => api.availableLegs(plate: plate);
 
@@ -162,7 +221,9 @@ class WorkService extends ChangeNotifier {
     log.info('work', 'Fuvar felvéve és letöltve: ${leg.legKey}');
   }
 
-  Future<List<FormTypeConfig>> formsFor(DriverLeg leg) => local.forms(leg.serviceOrgId);
+  /// A szolgálat jegyzőkönyv-típusa(i). Új jegyzőkönyvhöz csak az aktív ([activeOnly]);
+  /// egy már megkezdett folytatásához a saját (akár azóta inaktivált) típusa is.
+  Future<List<FormTypeConfig>> formsFor(DriverLeg leg, {bool activeOnly = false}) => local.forms(leg.serviceOrgId, activeOnly: activeOnly);
 
   Future<LocalInspectionDraft> openInspection({
     required DriverLeg leg,
@@ -179,14 +240,14 @@ class WorkService extends ChangeNotifier {
       copyFromServerId: copyFromServerId,
       copyFromLocalId: copyFromLocalId,
     );
-    log.info('insp', 'Jegyzőkönyv megnyitva: $phase ${draft.localId}, szakasz ${leg.legKey}, form $formTypeId, másolás: $copy');
+    log.info('insp', 'Jegyzőkönyv megnyitva: $phase ${draft.localId}, út ${leg.legKey}, form $formTypeId, másolás: $copy');
     return draft;
   }
 
   /// Local-first: a lezárás és az ebből következő fuvar-indítás/-lezárás egy
   /// lokális tranzakció, a hálózat nincs a kritikus úton. A szinkron a
   /// háttérben indul; az állapotát a SyncService jelzi a felületnek.
-  /// Visszaadja a szakasz új lokális státuszát.
+  /// Visszaadja az út új lokális státuszát.
   Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form) async {
     final result = await InspectionValidator(local).validate(draft, form);
     if (!result.valid) {
@@ -194,7 +255,7 @@ class WorkService extends ChangeNotifier {
       throw StateError(result.errors.join('\n'));
     }
     final status = await local.completeInspectionAndTransition(draft.localId);
-    log.info('insp', 'Jegyzőkönyv lezárva a telefonon: ${draft.inspectionType} ${draft.localId}, szakasz ${draft.legKey} → $status');
+    log.info('insp', 'Jegyzőkönyv lezárva a telefonon: ${draft.inspectionType} ${draft.localId}, út ${draft.legKey} → $status');
     unawaited(sync.run());
     return status;
   }

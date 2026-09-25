@@ -60,7 +60,8 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
       await _openEditor(existing.localId, form);
       return;
     }
-    final forms = await widget.services.work.formsFor(widget.leg);
+    // A sofőr nem választ: a szolgálat aktív jegyzőkönyv-típusát kapja.
+    final forms = await widget.services.work.formsFor(widget.leg, activeOnly: true);
     final source = await widget.services.local.copySourceFor(widget.leg, widget.phase);
     if (mounted) {
       setState(() {
@@ -68,6 +69,10 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
         _source = source;
         _formId = forms.length == 1 ? forms.first.id : null;
         _loading = false;
+        if (forms.isEmpty) {
+          _error = 'Nincs aktív jegyzőkönyv-típus a telefonon. Frissítsd a Munkáim listát hálózat mellett; '
+              'ha így sem jelenik meg, a sofőrszolgálat még nem állította be.';
+        }
       });
     }
   }
@@ -106,12 +111,16 @@ class _InspectionSetupScreenState extends State<InspectionSetupScreen> {
                   Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
                 Text('Rendszám: ${widget.leg.registrationNumber}', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: _formId,
-                  decoration: const InputDecoration(labelText: 'Űrlaptípus'),
-                  items: _forms.map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))).toList(),
-                  onChanged: (v) => setState(() => _formId = v),
-                ),
+                // Egy aktív típus van: csak megmutatjuk. Több csak régi szerverről jöhet — akkor választható.
+                if (_forms.length == 1)
+                  Text('Jegyzőkönyv: ${_forms.first.name}', style: Theme.of(context).textTheme.titleMedium)
+                else if (_forms.length > 1)
+                  DropdownButtonFormField<String>(
+                    value: _formId,
+                    decoration: const InputDecoration(labelText: 'Űrlaptípus'),
+                    items: _forms.map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))).toList(),
+                    onChanged: (v) => setState(() => _formId = v),
+                  ),
                 const SizedBox(height: 16),
                 if (_source != null)
                   SwitchListTile(

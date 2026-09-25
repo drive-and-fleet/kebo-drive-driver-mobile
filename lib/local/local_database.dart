@@ -12,7 +12,7 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
       onUpgrade: _upgrade,
@@ -51,6 +51,12 @@ class LocalDatabase {
         to_stop_type_name TEXT,
         from_stop_waits INTEGER,
         to_stop_waits INTEGER,
+        from_company_name TEXT,
+        to_company_name TEXT,
+        from_stop_notes TEXT,
+        to_stop_notes TEXT,
+        vehicle_notes TEXT,
+        vehicle_extra_email TEXT,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -62,6 +68,7 @@ class LocalDatabase {
         code TEXT NOT NULL,
         name TEXT NOT NULL,
         description TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -106,7 +113,8 @@ class LocalDatabase {
         leg_key TEXT NOT NULL,
         form_type_id TEXT NOT NULL,
         inspection_type TEXT NOT NULL,
-        completed_at TEXT
+        completed_at TEXT,
+        general_note TEXT
       )
     ''');
     await db.execute('''
@@ -160,6 +168,7 @@ class LocalDatabase {
         copy_from_server_id TEXT,
         copy_from_local_id TEXT,
         status TEXT NOT NULL,
+        general_note TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -233,17 +242,27 @@ class LocalDatabase {
         state TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
+        payload TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
     ''');
+    await db.execute('''
+      CREATE TABLE cached_fleet (
+        service_org_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        PRIMARY KEY (service_org_id, id)
+      )
+    ''');
+    await db.execute('CREATE TABLE cached_service (id TEXT PRIMARY KEY, name TEXT NOT NULL)');
 
     await db.execute('CREATE INDEX idx_cached_leg_service ON cached_leg(service_org_id, status)');
     await db.execute('CREATE INDEX idx_local_inspection_leg ON local_inspection(leg_key, inspection_type)');
     await db.execute('CREATE INDEX idx_sync_operation_state ON sync_operation(state, created_at)');
   }
 
-  /// v2: a sync sor szakaszonként rendezett (leg_key), a lokális forrásból
+  /// v2: a sync sor utanként rendezett (leg_key), a lokális forrásból
   /// másolt jegyzőkönyv a forrás szerveroldali példányából másol.
   Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
@@ -256,7 +275,7 @@ class LocalDatabase {
          WHERE operation_type = 'SYNC_INSPECTION'
       ''');
     }
-    // v3: a szakasz végpontjainak megállótípusa (körfuvar: WAIT).
+    // v3: az út végpontjainak megállótípusa (körfuvar: WAIT).
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE cached_leg ADD COLUMN from_stop_type TEXT');
       await db.execute('ALTER TABLE cached_leg ADD COLUMN to_stop_type TEXT');
@@ -270,6 +289,27 @@ class LocalDatabase {
     if (oldVersion < 5) {
       await db.execute('ALTER TABLE cached_leg ADD COLUMN from_stop_waits INTEGER');
       await db.execute('ALTER TABLE cached_leg ADD COLUMN to_stop_waits INTEGER');
+    }
+    // v6: a megálló cégneve és megjegyzése, az autó megjegyzése és további e-mail-címe;
+    // a jegyzőkönyv-típus aktív jelzője; a jegyzőkönyv általános megjegyzése; a sync
+    // művelet adatai (új fuvar); a szolgálat flottakezelő partnerei (új fuvar offline is).
+    if (oldVersion < 6) {
+      for (final column in ['from_company_name', 'to_company_name', 'from_stop_notes', 'to_stop_notes', 'vehicle_notes', 'vehicle_extra_email']) {
+        await db.execute('ALTER TABLE cached_leg ADD COLUMN $column TEXT');
+      }
+      await db.execute('ALTER TABLE cached_form_type ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+      await db.execute('ALTER TABLE previous_inspection ADD COLUMN general_note TEXT');
+      await db.execute('ALTER TABLE local_inspection ADD COLUMN general_note TEXT');
+      await db.execute('ALTER TABLE sync_operation ADD COLUMN payload TEXT');
+      await db.execute('''
+        CREATE TABLE cached_fleet (
+          service_org_id TEXT NOT NULL,
+          id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          PRIMARY KEY (service_org_id, id)
+        )
+      ''');
+      await db.execute('CREATE TABLE cached_service (id TEXT PRIMARY KEY, name TEXT NOT NULL)');
     }
   }
 

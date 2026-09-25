@@ -47,13 +47,13 @@ class LegCard extends StatelessWidget {
                 child: SyncBadge(syncState),
               ),
               const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider(height: 1)),
-              _AddressLine(icon: Icons.trip_origin, label: leg.fromStopTypeName ?? (leg.isReturn ? 'Visszaindulás' : 'Felvétel'), address: leg.fromAddress, time: leg.plannedStart),
+              _AddressLine(icon: Icons.trip_origin, label: leg.fromStopTypeName ?? (leg.isReturn ? 'Visszaindulás' : 'Felvétel'), address: leg.fromPlace, time: leg.plannedStart),
               const SizedBox(height: 6),
-              _AddressLine(icon: leg.isOutbound ? Icons.hourglass_top : Icons.flag_outlined, label: leg.toStopTypeName ?? (leg.isOutbound ? 'Várakozás' : 'Leadás'), address: leg.toAddress, time: leg.plannedEnd),
+              _AddressLine(icon: leg.isOutbound ? Icons.hourglass_top : Icons.flag_outlined, label: leg.toStopTypeName ?? (leg.isOutbound ? 'Várakozás' : 'Leadás'), address: leg.toPlace, time: leg.plannedEnd),
               const SizedBox(height: 10),
               Row(children: [
                 Expanded(child: Text(
-                  'Fuvar: ${leg.orderNo} • Szakasz ${leg.sequenceNo}${leg.legCount == null ? '' : '/${leg.legCount}'}',
+                  'Fuvar: ${leg.orderNo} • Út ${leg.sequenceNo}${leg.legCount == null ? '' : '/${leg.legCount}'}',
                   style: const TextStyle(fontSize: 13, color: AppColors.ink400),
                 )),
                 if (trailing != null) trailing!,

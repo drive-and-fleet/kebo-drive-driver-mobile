@@ -16,7 +16,7 @@ class DriverApi {
     return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
-  /// A sofőr által teljesített szakaszok az elmúlt [days] napból, a legújabb elöl.
+  /// A sofőr által teljesített utak az elmúlt [days] napból, a legújabb elöl.
   Future<List<DriverLeg>> completedLegs({int days = 90}) async {
     final raw = await _http.get('/api/v1/driver/legs/completed', token: await _token(), query: {'days': '$days'}) as List<dynamic>;
     return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
@@ -98,8 +98,43 @@ class DriverApi {
     return '${raw['id']}';
   }
 
-  Future<void> saveValues(String inspectionId, List<Map<String, dynamic>> values) async {
-    await _http.put('/api/v1/driver/inspections/$inspectionId/values', token: await _token(), body: {'values': values});
+  /// A mezőértékek és az általános megjegyzés ([generalNote]: null = nincs megjegyzés).
+  Future<void> saveValues(String inspectionId, List<Map<String, dynamic>> values, {String? generalNote}) async {
+    await _http.put('/api/v1/driver/inspections/$inspectionId/values', token: await _token(), body: {
+      'values': values,
+      'generalNote': generalNote,
+    });
+  }
+
+  /// Az út autójának adatai, csak a sofőr által módosított mezők ([changes]:
+  /// registrationNumber, userEmail, extraEmail; üres szöveg = törlés). Naplózva.
+  Future<Map<String, dynamic>> updateLegVehicle(String legKey, Map<String, String?> changes) async {
+    return Map<String, dynamic>.from(await _http.put('/api/v1/driver/legs/$legKey/vehicle', token: await _token(), body: {
+      for (final entry in changes.entries) entry.key: entry.value ?? '',
+    }) as Map);
+  }
+
+  /// A sofőrszolgálatok, amelyeknek a sofőr most tagja.
+  Future<List<Map<String, dynamic>>> myServices() async {
+    final raw = await _http.get('/api/v1/driver/my-services', token: await _token()) as List<dynamic>;
+    return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  /// A sofőrszolgálat flottakezelő partnerei (új fuvarhoz).
+  Future<List<Map<String, dynamic>>> fleets(String serviceOrgId) async {
+    final raw = await _http.get('/api/v1/driver/services/$serviceOrgId/fleets', token: await _token()) as List<dynamic>;
+    return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  /// A szolgálat gépjármű-nyilvántartása a rendszámról (null: nincs ilyen).
+  Future<Map<String, dynamic>?> lookupVehicle(String serviceOrgId, String plate) async {
+    final raw = await _http.get('/api/v1/driver/services/$serviceOrgId/vehicles/lookup', token: await _token(), query: {'plate': plate});
+    return raw is Map ? Map<String, dynamic>.from(raw) : null;
+  }
+
+  /// Új fuvar egy úttal a sofőrre (idempotens a `deviceOperationId` szerint).
+  Future<Map<String, dynamic>> createOrder(Map<String, dynamic> payload) async {
+    return Map<String, dynamic>.from(await _http.post('/api/v1/driver/orders', token: await _token(), body: payload) as Map);
   }
 
   Future<String> addDamage(String inspectionId, Map<String, dynamic> damage) async {

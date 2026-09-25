@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -43,10 +44,39 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   /// utólagos változás sosem jutna fel a szerverre.
   bool get _readOnly => _draft?.status != 'DRAFT' || _finalizing;
 
+  /// „Általános megjegyzés”: gépelés közben, fél másodperc szünet után mentődik a telefonra.
+  final _note = TextEditingController();
+  bool _noteLoaded = false;
+  Timer? _noteTimer;
+
+  @override
+  void dispose() {
+    final pending = _noteTimer?.isActive ?? false;
+    _noteTimer?.cancel();
+    // Ami a gépelés után még nem mentődött (azonnal kilépett), az most megy a telefonra.
+    if (pending && _draft?.status == 'DRAFT') unawaited(_saveNote());
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveNote() async {
+    try {
+      await widget.services.local.saveGeneralNote(widget.draftId, _note.text);
+    } catch (e, stack) {
+      log.error('insp', 'A megjegyzés mentése nem sikerült (${widget.draftId})', e, stack);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('A megjegyzést nem sikerült menteni: $e')));
+    }
+  }
+
+  void _noteChanged(String _) {
+    _noteTimer?.cancel();
+    _noteTimer = Timer(const Duration(milliseconds: 500), _saveNote);
+  }
+
   @override
   void initState() {
     super.initState();
-    log.info('ui', 'Képernyő: jegyzőkönyv szerkesztése ${widget.draftId} (szakasz ${widget.leg.legKey}, form ${widget.form.id})');
+    log.info('ui', 'Képernyő: jegyzőkönyv szerkesztése ${widget.draftId} (út ${widget.leg.legKey}, form ${widget.form.id})');
     _init();
   }
 
@@ -79,6 +109,11 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       _photos = photos;
       _signatures = signatures;
       _loading = false;
+      // Egyszer, betöltéskor (a másolt megjegyzés is): utána a mező a forrás.
+      if (!_noteLoaded && draft != null) {
+        _note.text = draft.generalNote ?? '';
+        _noteLoaded = true;
+      }
     });
   }
 
@@ -179,6 +214,29 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
         ));
   }
 
+  /// Átvételkor az átadó, leadáskor az átvevő szignál; szerepenként egy szignó van.
+  String get _signerRole => _draft?.inspectionType == 'PICKUP' ? 'HANDOVER' : 'RECEIVER';
+
+  Future<void> _deleteSignature(LocalSignature signature) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Szignó törlése'),
+        content: Text('Törlöd ${signature.signerName} szignóját? Lezárás előtt újat kell rögzíteni.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Törlés')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _guard(() async {
+      final path = await widget.services.local.deleteSignature(signature.localId);
+      await widget.services.fileStore.deleteIfExists(path);
+      log.info('insp', 'Aláírás törölve (${widget.draftId})');
+    });
+  }
+
   Future<void> _addSignature() async {
     final name = TextEditingController(text: widget.leg.vehicleUserName ?? '');
     final controller = SignatureController(penStrokeWidth: 3);
@@ -203,13 +261,18 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       if (bytes != null) {
         final path = await widget.services.fileStore.persistBytes(bytes);
         final signerName = name.text.trim();
-        log.info('insp', 'Aláírás rögzítve (${widget.draftId})');
-        await _guard(() => widget.services.local.addSignature(
-              inspectionLocalId: widget.draftId,
-              signerName: signerName,
-              signerRole: _draft?.inspectionType == 'PICKUP' ? 'HANDOVER' : 'RECEIVER',
-              localPath: path,
-            ));
+        await _guard(() async {
+          final replaced = await widget.services.local.addSignature(
+            inspectionLocalId: widget.draftId,
+            signerName: signerName,
+            signerRole: _signerRole,
+            localPath: path,
+          );
+          for (final old in replaced) {
+            await widget.services.fileStore.deleteIfExists(old);
+          }
+          log.info('insp', replaced.isEmpty ? 'Aláírás rögzítve (${widget.draftId})' : 'Aláírás lecserélve (${widget.draftId})');
+        });
       }
     }
     name.dispose(); controller.dispose();
@@ -218,6 +281,11 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   Future<void> _finalize() async {
     final draft = _draft;
     if (draft == null) return;
+    // A még időzített megjegyzés-mentés előbb lefut: a lezárt jegyzőkönyv már nem módosítható.
+    if (_noteTimer?.isActive ?? false) {
+      _noteTimer!.cancel();
+      await _saveNote();
+    }
     setState(() => _finalizing = true);
     log.info('insp', 'Lezárás kérve: ${draft.inspectionType} ${draft.localId}');
     try {
@@ -302,11 +370,38 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     ),
                   ),
                 const SizedBox(height: 16),
+                Text('Általános megjegyzés', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _note,
+                  readOnly: _readOnly,
+                  minLines: 2,
+                  maxLines: 6,
+                  onChanged: _noteChanged,
+                  decoration: const InputDecoration(hintText: 'Bármi, ami a jegyzőkönyvhöz tartozik (a következő jegyzőkönyvbe is átmásolható)'),
+                ),
+                const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Kézi szignó', style: Theme.of(context).textTheme.titleLarge),
-                  FilledButton.tonalIcon(onPressed: _readOnly ? null : _addSignature, icon: const Icon(Icons.draw), label: const Text('Szignó')),
+                  FilledButton.tonalIcon(
+                    onPressed: _readOnly ? null : _addSignature,
+                    icon: const Icon(Icons.draw),
+                    label: Text(_signatures.isEmpty ? 'Szignó' : 'Szignó cseréje'),
+                  ),
                 ]),
-                for (final signature in _signatures) ListTile(leading: const Icon(Icons.draw), title: Text(signature.signerName), subtitle: Text(signature.signedAt.toLocal().toString().substring(0, 16))),
+                for (final signature in _signatures)
+                  ListTile(
+                    leading: const Icon(Icons.draw),
+                    title: Text(signature.signerName),
+                    subtitle: Text(signature.signedAt.toLocal().toString().substring(0, 16)),
+                    trailing: _readOnly
+                        ? null
+                        : IconButton(
+                            tooltip: 'Szignó törlése',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _deleteSignature(signature),
+                          ),
+                  ),
                 const SizedBox(height: 24),
                 if (_draft?.status == 'DRAFT') ...[
                   FilledButton.icon(onPressed: _finalizing ? null : _finalize, icon: const Icon(Icons.check), label: const Text('Jegyzőkönyv lezárása')),

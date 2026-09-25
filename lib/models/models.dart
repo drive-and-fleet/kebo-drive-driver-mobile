@@ -72,6 +72,13 @@ class DriverLeg {
     this.toStopTypeName,
     this.fromStopWaits,
     this.toStopWaits,
+    this.previousLegStatus,
+    this.fromCompanyName,
+    this.toCompanyName,
+    this.fromStopNotes,
+    this.toStopNotes,
+    this.vehicleNotes,
+    this.vehicleExtraEmail,
   });
 
   final String? legId;
@@ -97,7 +104,7 @@ class DriverLeg {
   final String? toContactName;
   final String? toContactPhone;
 
-  /// Hány szakasz tartozik ehhez a járműhöz az útvonalon. Csak a szabad fuvarok
+  /// Hány út tartozik ehhez a járműhöz az útvonalon. Csak a szabad fuvarok
   /// listájában jön a szervertől, a lokális cache-ben nincs eltárolva.
   final int? legCount;
 
@@ -113,6 +120,26 @@ class DriverLeg {
   /// (STOP_BEHAVIOR.driver_waits). Null a régi szervertől / régi gyorsítótárból.
   final bool? fromStopWaits;
   final bool? toStopWaits;
+
+  /// A megállók cégneve (pl. a szerviz) és megjegyzése, az iroda rögzítéséből.
+  final String? fromCompanyName;
+  final String? toCompanyName;
+  final String? fromStopNotes;
+  final String? toStopNotes;
+
+  /// Az autó megjegyzése a fuvarban (pl. engedélyszám) és a további cím, amelyre a jegyzőkönyvek is mennek.
+  final String? vehicleNotes;
+  final String? vehicleExtraEmail;
+
+  /// A cím a cégnévvel együtt, ahogy a sofőrnek mutatjuk.
+  String get fromPlace => _place(fromCompanyName, fromAddress);
+  String get toPlace => _place(toCompanyName, toAddress);
+
+  /// Az autó előző útjának állapota (csak a szabad fuvarok listájában jön).
+  /// Amíg az nem teljesült (COMPLETED), ez az út nem vehető fel: az utak sorban mennek.
+  final String? previousLegStatus;
+
+  bool get waitsForPreviousLeg => previousLegStatus != null && previousLegStatus != 'COMPLETED';
 
   /// Körfuvar odaútja: a cél egy várakozó megálló, ahol a sofőr megvárja az autót,
   /// és onnan viszi tovább (visszaút). Jelző nélkül a régi WAIT kód dönt.
@@ -151,6 +178,13 @@ class DriverLeg {
         toStopTypeName: json['toStopTypeName']?.toString(),
         fromStopWaits: _flag(json['fromStopWaits']),
         toStopWaits: _flag(json['toStopWaits']),
+        previousLegStatus: json['previousLegStatus']?.toString(),
+        fromCompanyName: json['fromCompanyName']?.toString(),
+        toCompanyName: json['toCompanyName']?.toString(),
+        fromStopNotes: json['fromStopNotes']?.toString(),
+        toStopNotes: json['toStopNotes']?.toString(),
+        vehicleNotes: json['vehicleNotes']?.toString(),
+        vehicleExtraEmail: json['vehicleExtraEmail']?.toString(),
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -182,6 +216,12 @@ class DriverLeg {
         'to_stop_type_name': toStopTypeName,
         'from_stop_waits': fromStopWaits == null ? null : (fromStopWaits! ? 1 : 0),
         'to_stop_waits': toStopWaits == null ? null : (toStopWaits! ? 1 : 0),
+        'from_company_name': fromCompanyName,
+        'to_company_name': toCompanyName,
+        'from_stop_notes': fromStopNotes,
+        'to_stop_notes': toStopNotes,
+        'vehicle_notes': vehicleNotes,
+        'vehicle_extra_email': vehicleExtraEmail,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -214,6 +254,12 @@ class DriverLeg {
         toStopTypeName: json['to_stop_type_name']?.toString(),
         fromStopWaits: _flag(json['from_stop_waits']),
         toStopWaits: _flag(json['to_stop_waits']),
+        fromCompanyName: json['from_company_name']?.toString(),
+        toCompanyName: json['to_company_name']?.toString(),
+        fromStopNotes: json['from_stop_notes']?.toString(),
+        toStopNotes: json['to_stop_notes']?.toString(),
+        vehicleNotes: json['vehicle_notes']?.toString(),
+        vehicleExtraEmail: json['vehicle_extra_email']?.toString(),
       );
 
   DriverLeg copyWithStatus(String newStatus) => DriverLeg(
@@ -246,7 +292,32 @@ class DriverLeg {
         toStopTypeName: toStopTypeName,
         fromStopWaits: fromStopWaits,
         toStopWaits: toStopWaits,
+        previousLegStatus: previousLegStatus,
+        fromCompanyName: fromCompanyName,
+        toCompanyName: toCompanyName,
+        fromStopNotes: fromStopNotes,
+        toStopNotes: toStopNotes,
+        vehicleNotes: vehicleNotes,
+        vehicleExtraEmail: vehicleExtraEmail,
       );
+}
+
+String _place(String? company, String address) {
+  final name = company?.trim() ?? '';
+  return name.isEmpty ? address : '$name – $address';
+}
+
+/// Egy autó útjai mindig egymás után, sorszám szerint (a felvétel, pl. a körfuvar
+/// odaútja elöl); az autók egymás közti sorrendjét [compareVehicles] adja az
+/// autó első útja alapján.
+List<DriverLeg> groupByVehicle(List<DriverLeg> legs, int Function(DriverLeg a, DriverLeg b) compareVehicles) {
+  final groups = <String, List<DriverLeg>>{};
+  for (final leg in legs) {
+    groups.putIfAbsent(leg.orderVehicleId, () => []).add(leg);
+  }
+  final ordered = groups.values.map((group) => group..sort((a, b) => a.sequenceNo.compareTo(b.sequenceNo))).toList()
+    ..sort((a, b) => compareVehicles(a.first, b.first));
+  return [for (final group in ordered) ...group];
 }
 
 class FormFieldConfig {

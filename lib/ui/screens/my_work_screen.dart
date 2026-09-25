@@ -44,18 +44,16 @@ class MyWorkScreenState extends State<MyWorkScreen> {
       if (y == null) return -1;
       return x.compareTo(y);
     }
-    switch (_sort[_view]!) {
-      case _SortOrder.pickupAsc:
-        legs.sort(byPickup);
-      case _SortOrder.pickupDesc:
-        legs.sort((a, b) => a.plannedStart == null || b.plannedStart == null ? byPickup(a, b) : byPickup(b, a));
-      case _SortOrder.plate:
-        legs.sort((a, b) {
+    // Egy autó útjai egymás után, sorszám szerint (körfuvarnál az odaút elöl);
+    // a választott rendezés az autók sorrendjét adja.
+    return switch (_sort[_view]!) {
+      _SortOrder.pickupAsc => groupByVehicle(legs, byPickup),
+      _SortOrder.pickupDesc => groupByVehicle(legs, (a, b) => a.plannedStart == null || b.plannedStart == null ? byPickup(a, b) : byPickup(b, a)),
+      _SortOrder.plate => groupByVehicle(legs, (a, b) {
           final c = a.registrationNumber.toUpperCase().compareTo(b.registrationNumber.toUpperCase());
           return c != 0 ? c : byPickup(a, b);
-        });
-    }
-    return legs;
+        }),
+    };
   }
 
   @override

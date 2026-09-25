@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -27,18 +29,187 @@ class LocalRepository {
         localStatus['${row['leg_key']}'] = '${row['status']}';
       }
     }
+    // Az autó adatait a sofőr módosította, és még nem ment fel: a telefoné nyer,
+    // amíg fel nem megy (különben a frissítés visszaírná a régit).
+    final vehicleEdits = <String, Map<String, Object?>>{};
+    final editRows = await db.rawQuery('''
+      SELECT leg.order_vehicle_id AS ov, leg.registration_number, leg.vehicle_user_email, leg.vehicle_extra_email
+        FROM sync_operation op JOIN cached_leg leg ON leg.leg_key = op.leg_key
+       WHERE op.operation_type = 'UPDATE_VEHICLE' AND op.state IN ('PENDING','RUNNING','ERROR','CONFLICT')''');
+    for (final row in editRows) {
+      vehicleEdits['${row['ov']}'] = row;
+    }
     final batch = db.batch();
     for (final leg in legs) {
       final map = leg.toCacheMap();
       if (pending.contains(leg.legKey) && localStatus[leg.legKey] != null && localStatus[leg.legKey] != 'REVOKED') {
         map['status'] = localStatus[leg.legKey];
       }
+      final edit = vehicleEdits[leg.orderVehicleId];
+      if (edit != null) {
+        map['registration_number'] = edit['registration_number'];
+        map['vehicle_user_email'] = edit['vehicle_user_email'];
+        map['vehicle_extra_email'] = edit['vehicle_extra_email'];
+      }
       batch.insert('cached_leg', map, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }
 
-  /// A szerver teljes listája a sofőr még elvégzendő szakaszairól ([serverKeys])
+  /// A telefonon felvett, még fel nem küldött fuvar ideiglenes azonosítója ezzel kezdődik.
+  static const localLegPrefix = 'local-';
+  static bool isLocalLeg(String legKey) => legKey.startsWith(localLegPrefix);
+
+  /// Rendszám a szerver szabálya szerint: szóköz és kötőjel nélkül, nagybetűvel.
+  static String normalizePlate(String value) => value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+
+  /// A sofőr módosítja az út autójának adatait (rendszám, használó e-mail, további
+  /// cím). Local-first: az autó minden útján azonnal átíródik a telefonon, és egy
+  /// sync művelet viszi fel — csak a ténylegesen módosított mezőket, hogy az iroda
+  /// közbeni módosítását ne írja felül. Több módosítás egy műveletbe olvad.
+  /// Visszaadja, hogy volt-e változás.
+  Future<bool> updateLegVehicle(String legKey, {String? registrationNumber, String? userEmail, String? extraEmail}) async {
+    final db = await _db;
+    return db.transaction((txn) async {
+      final rows = await txn.query('cached_leg', where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
+      if (rows.isEmpty) throw StateError('Az út nincs a telefonon.');
+      final current = rows.first;
+      final changes = <String, String?>{};
+      final column = <String, String>{};
+      if (registrationNumber != null) {
+        final plate = normalizePlate(registrationNumber);
+        if (plate.isEmpty) throw StateError('A rendszám nem lehet üres.');
+        if (plate != normalizePlate('${current['registration_number']}')) {
+          changes['registrationNumber'] = plate;
+          column['registration_number'] = plate;
+        }
+      }
+      String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim().toLowerCase();
+      if (userEmail != null && clean(userEmail) != clean(current['vehicle_user_email']?.toString())) {
+        changes['userEmail'] = clean(userEmail);
+        column['vehicle_user_email'] = clean(userEmail) ?? '';
+      }
+      if (extraEmail != null && clean(extraEmail) != clean(current['vehicle_extra_email']?.toString())) {
+        changes['extraEmail'] = clean(extraEmail);
+        column['vehicle_extra_email'] = clean(extraEmail) ?? '';
+      }
+      if (changes.isEmpty) return false;
+
+      final now = DateTime.now().toUtc().toIso8601String();
+      await txn.update('cached_leg', {
+        for (final entry in column.entries) entry.key: entry.value.isEmpty ? null : entry.value,
+        'updated_at': now,
+      }, where: 'order_vehicle_id = ?', whereArgs: [current['order_vehicle_id']]);
+
+      // Még el nem indult művelet ugyanerre az autóra: a változások beleolvadnak.
+      final open = await txn.rawQuery('''
+        SELECT op.id, op.payload FROM sync_operation op JOIN cached_leg leg ON leg.leg_key = op.leg_key
+         WHERE op.operation_type = 'UPDATE_VEHICLE' AND op.state IN ('PENDING','ERROR','CONFLICT')
+           AND leg.order_vehicle_id = ? LIMIT 1''', [current['order_vehicle_id']]);
+      if (open.isNotEmpty) {
+        final merged = Map<String, dynamic>.from(jsonDecode('${open.first['payload'] ?? '{}'}') as Map)..addAll(changes);
+        await txn.update('sync_operation', {'payload': jsonEncode(merged), 'state': 'PENDING', 'last_error': null, 'updated_at': now},
+            where: 'id = ?', whereArgs: [open.first['id']]);
+      } else {
+        await txn.insert('sync_operation', {
+          'id': _uuid.v4(), 'operation_type': 'UPDATE_VEHICLE', 'entity_id': legKey, 'leg_key': legKey, 'state': 'PENDING',
+          'attempts': 0, 'last_error': null, 'payload': jsonEncode(changes), 'created_at': now, 'updated_at': now,
+        });
+      }
+      return true;
+    });
+  }
+
+  /// Új fuvar a telefonon (egyszerűsített: egy autó, A → B, egy út a sofőrre).
+  /// Local-first: azonnal megjelenik a Munkáim között (ideiglenes azonosítóval),
+  /// és indítható, jegyzőkönyvezhető; a szinkron hozza létre a szerveren, utána
+  /// minden helyi hivatkozás a szerver azonosítójára vált. Visszaadja az út kulcsát.
+  Future<String> createLocalOrder(Map<String, dynamic> payload, {required String fleetName}) async {
+    final db = await _db;
+    final operationId = _uuid.v4();
+    final legKey = '$localLegPrefix$operationId';
+    final pickup = Map<String, dynamic>.from(payload['pickup'] as Map);
+    final dropoff = Map<String, dynamic>.from(payload['dropoff'] as Map);
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      await txn.insert('cached_leg', {
+        'leg_key': legKey, 'leg_id': null, 'status': 'ASSIGNED', 'sequence_no': 1,
+        'planned_start': pickup['plannedFrom'], 'planned_end': dropoff['plannedFrom'],
+        'order_vehicle_id': 'local-ov-$operationId', 'registration_number': normalizePlate('${payload['registrationNumber']}'),
+        'make': payload['make'], 'model': payload['model'], 'color': payload['color'],
+        'order_no': 'Új fuvar – $fleetName', 'service_org_id': '${payload['serviceOrgId']}',
+        'from_address': '${pickup['addressLine']}', 'to_address': '${dropoff['addressLine']}',
+        'from_company_name': pickup['companyName'], 'to_company_name': dropoff['companyName'],
+        'from_contact_name': pickup['contactName'], 'from_contact_phone': pickup['contactPhone'],
+        'to_contact_name': dropoff['contactName'], 'to_contact_phone': dropoff['contactPhone'],
+        'from_stop_notes': pickup['notes'], 'to_stop_notes': dropoff['notes'],
+        'vehicle_user_name': payload['userName'], 'vehicle_user_email': payload['userEmail'], 'vehicle_user_phone': payload['userPhone'],
+        'vehicle_extra_email': payload['extraEmail'], 'vehicle_notes': payload['notes'],
+        'updated_at': now,
+      });
+      await txn.insert('sync_operation', {
+        'id': operationId, 'operation_type': 'CREATE_ORDER', 'entity_id': legKey, 'leg_key': legKey, 'state': 'PENDING',
+        'attempts': 0, 'last_error': null, 'payload': jsonEncode({...payload, 'deviceOperationId': operationId}),
+        'created_at': now, 'updated_at': now,
+      });
+    });
+    return legKey;
+  }
+
+  /// A szerveren létrejött fuvar: az ideiglenes út-azonosító mindenhol a szerverére vált
+  /// (az út, a jegyzőkönyvei és a még hátralévő szinkron-műveletei).
+  /// Az app futása alatt átváltott ideiglenes → szerveroldali út-kulcsok: a nyitva
+  /// lévő képernyők ezzel találják meg az utat az átváltás után is.
+  static final Map<String, String> remappedLegKeys = {};
+  static String currentLegKey(String legKey) => remappedLegKeys[legKey] ?? legKey;
+
+  Future<void> remapLegKey(String temporary, String real, {required String orderNo}) async {
+    remappedLegKeys[temporary] = real;
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.update('cached_leg', {'leg_key': real, 'order_no': orderNo}, where: 'leg_key = ?', whereArgs: [temporary]);
+      await txn.update('local_inspection', {'leg_key': real}, where: 'leg_key = ?', whereArgs: [temporary]);
+      await txn.update('sync_operation', {'leg_key': real}, where: 'leg_key = ?', whereArgs: [temporary]);
+      await txn.update('sync_operation', {'entity_id': real}, where: 'entity_id = ?', whereArgs: [temporary]);
+    });
+  }
+
+  // ── új fuvarhoz: a sofőr szolgálatai és azok flottakezelő partnerei (offline is) ──
+
+  Future<void> cacheServices(List<Map<String, dynamic>> services) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.delete('cached_service');
+      for (final s in services) {
+        await txn.insert('cached_service', {'id': '${s['id']}', 'name': '${s['name']}'});
+      }
+    });
+  }
+
+  Future<List<Map<String, String>>> services() async {
+    final db = await _db;
+    return [for (final r in await db.query('cached_service', orderBy: 'name')) {'id': '${r['id']}', 'name': '${r['name']}'}];
+  }
+
+  Future<void> cacheFleets(String serviceOrgId, List<Map<String, dynamic>> fleets) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.delete('cached_fleet', where: 'service_org_id = ?', whereArgs: [serviceOrgId]);
+      for (final f in fleets) {
+        await txn.insert('cached_fleet', {'service_org_id': serviceOrgId, 'id': '${f['id']}', 'name': '${f['name']}'});
+      }
+    });
+  }
+
+  Future<List<Map<String, String>>> fleets(String serviceOrgId) async {
+    final db = await _db;
+    return [
+      for (final r in await db.query('cached_fleet', where: 'service_org_id = ?', whereArgs: [serviceOrgId], orderBy: 'name'))
+        {'id': '${r['id']}', 'name': '${r['name']}'},
+    ];
+  }
+
+  /// A szerver teljes listája a sofőr még elvégzendő útjairól ([serverKeys])
   /// alapján rendbe teszi a telefont: ami itt még elvégzendő (kiosztva / folyamatban),
   /// de a szerver már nem adja (lemondták, visszavették, átadták), az eltűnik.
   /// Ha viszont van hozzá még fel nem töltött helyi munka (nyitott vagy lezárt, de
@@ -53,7 +224,8 @@ class LocalRepository {
     await db.transaction((txn) async {
       final rows = await txn.query('cached_leg',
           columns: ['leg_key', 'status'],
-          where: "status IN ('PLANNED','ASSIGNED','IN_PROGRESS','REVOKED') AND updated_at < ?",
+          // A telefonon felvett, még fel nem küldött fuvar még nincs a szerveren: nem „tűnt el”.
+          where: "status IN ('PLANNED','ASSIGNED','IN_PROGRESS','REVOKED') AND updated_at < ? AND leg_key NOT LIKE '$localLegPrefix%'",
           whereArgs: [fetchedAt.toUtc().toIso8601String()]);
       for (final row in rows) {
         final legKey = '${row['leg_key']}';
@@ -94,7 +266,7 @@ class LocalRepository {
   }
 
   /// Körfuvar: az odaút ([outbound]) visszaútja, ha a telefonon van (vagyis ennél
-  /// a sofőrnél): ugyanaz a jármű, a várakozó megállóból induló következő szakasz.
+  /// a sofőrnél): ugyanaz a jármű, a várakozó megállóból induló következő út.
   Future<DriverLeg?> returnLegFor(DriverLeg outbound) async {
     if (!outbound.isOutbound) return null;
     final db = await _db;
@@ -128,13 +300,24 @@ class LocalRepository {
   Future<void> cacheForms(String serviceOrgId, List<dynamic> rawForms) async {
     final db = await _db;
     await db.transaction((txn) async {
+      // A szerver csak az aktív jegyzőkönyv-típust küldi (szolgálatonként egyet).
+      // Ha az iroda közben másikat aktivált, a régit nem dobjuk el, amíg egy
+      // helyi jegyzőkönyv hivatkozik rá (félkész vagy még fel nem töltött, vagy
+      // csak megtekinthető): az inaktív marad, új jegyzőkönyvet viszont nem kap.
+      final incoming = {
+        for (final raw in rawForms.cast<Map<String, dynamic>>()) '${Map<String, dynamic>.from(raw['form'] as Map)['id']}'
+      };
       final existing = await txn.query('cached_form_type', columns: ['id'], where: 'service_org_id = ?', whereArgs: [serviceOrgId]);
-      final formIds = existing.map((row) => '${row['id']}').toList();
-      for (final formId in formIds) {
-        await txn.delete('cached_form_field', where: 'form_type_id = ?', whereArgs: [formId]);
-        await txn.delete('cached_photo_requirement', where: 'form_type_id = ?', whereArgs: [formId]);
+      for (final formId in existing.map((row) => '${row['id']}')) {
+        final used = Sqflite.firstIntValue(await txn.rawQuery('SELECT COUNT(*) FROM local_inspection WHERE form_type_id = ?', [formId])) ?? 0;
+        if (incoming.contains(formId) || used == 0) {
+          await txn.delete('cached_form_field', where: 'form_type_id = ?', whereArgs: [formId]);
+          await txn.delete('cached_photo_requirement', where: 'form_type_id = ?', whereArgs: [formId]);
+          await txn.delete('cached_form_type', where: 'id = ?', whereArgs: [formId]);
+        } else {
+          await txn.update('cached_form_type', {'active': 0}, where: 'id = ?', whereArgs: [formId]);
+        }
       }
-      await txn.delete('cached_form_type', where: 'service_org_id = ?', whereArgs: [serviceOrgId]);
 
       final now = DateTime.now().toUtc().toIso8601String();
       for (final raw in rawForms.cast<Map<String, dynamic>>()) {
@@ -146,6 +329,7 @@ class LocalRepository {
           'code': '${form['code']}',
           'name': '${form['name']}',
           'description': form['description']?.toString(),
+          'active': 1,
           'updated_at': now,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
 
@@ -192,9 +376,12 @@ class LocalRepository {
     });
   }
 
-  Future<List<FormTypeConfig>> forms(String serviceOrgId) async {
+  /// A szolgálat jegyzőkönyv-típusai a telefonon. [activeOnly]: csak az aktív
+  /// (új jegyzőkönyvhöz); nélküle a régiek is, amelyekre helyi jegyzőkönyv hivatkozik.
+  Future<List<FormTypeConfig>> forms(String serviceOrgId, {bool activeOnly = false}) async {
     final db = await _db;
-    final formRows = await db.query('cached_form_type', where: 'service_org_id = ?', whereArgs: [serviceOrgId], orderBy: 'name');
+    final formRows = await db.query('cached_form_type',
+        where: activeOnly ? 'service_org_id = ? AND active = 1' : 'service_org_id = ?', whereArgs: [serviceOrgId], orderBy: 'name');
     final result = <FormTypeConfig>[];
     for (final form in formRows) {
       final formId = '${form['id']}';
@@ -263,6 +450,7 @@ class LocalRepository {
         await txn.insert('previous_inspection', {
           'server_id': serverId,
           'leg_key': legKey,
+          'general_note': inspection['generalNote']?.toString(),
           'form_type_id': '${inspection['formTypeId']}',
           'inspection_type': '${inspection['inspectionType']}',
           'completed_at': inspection['completedAt']?.toString(),
@@ -341,11 +529,11 @@ class LocalRepository {
     return result;
   }
 
-  /// A szakasz lokálisan már kitöltött jegyzőkönyvei — ezekből offline is lehet
+  /// Az út lokálisan már kitöltött jegyzőkönyvei — ezekből offline is lehet
   /// másolni, akkor is, ha a szinkron még nem futott le.
-  /// Az egyetlen másolható forrás [phase]-hez ([leg] szakaszon): leadásnál a
-  /// szakasz saját átvételi jegyzőkönyve, átvételnél az autó előző (nem lemondott)
-  /// szakaszának leadási jegyzőkönyve. A telefonon rögzített példány elsőbbséget
+  /// Az egyetlen másolható forrás [phase]-hez ([leg] úton): leadásnál a
+  /// út saját átvételi jegyzőkönyve, átvételnél az autó előző (nem lemondott)
+  /// útjának leadási jegyzőkönyve. A telefonon rögzített példány elsőbbséget
   /// kap, így internet nélkül is másolható; ha nincs, a szerverről letöltött.
   Future<CopySource?> copySourceFor(DriverLeg leg, String phase) async {
     final db = await _db;
@@ -408,7 +596,7 @@ class LocalRepository {
 
   /// Csak DRAFT-ot folytat: a lezárt jegyzőkönyv nem nyílik újra szerkesztésre.
   /// A keresés és a beszúrás egy tranzakcióban fut, így dupla érintés sem hoz
-  /// létre két piszkozatot ugyanarra a szakaszra és fázisra.
+  /// létre két piszkozatot ugyanarra az útra és fázisra.
   Future<LocalInspectionDraft> createOrResumeInspection({
     required String legKey,
     required String formTypeId,
@@ -428,7 +616,7 @@ class LocalRepository {
       );
       if (existing.isNotEmpty) {
         if (existing.first['status'] == 'DRAFT') return '${existing.first['local_id']}';
-        throw StateError('Ehhez a szakaszhoz már van lezárt ${phase == 'PICKUP' ? 'átvételi' : 'leadási'} jegyzőkönyv.');
+        throw StateError('Ehhez az úthoz már van lezárt ${phase == 'PICKUP' ? 'átvételi' : 'leadási'} jegyzőkönyv.');
       }
 
       final now = DateTime.now().toUtc().toIso8601String();
@@ -449,6 +637,16 @@ class LocalRepository {
         await _copyBaseline(txn, id, formTypeId, phase, copyFromServerId);
       } else if (copyFromLocalId != null) {
         await _copyFromLocal(txn, id, formTypeId, phase, copyFromLocalId);
+      }
+      // Az általános megjegyzés is átkerül; a sofőr lezárás előtt átírhatja.
+      final sourceNote = copyFromServerId != null
+          ? (await txn.query('previous_inspection', columns: ['general_note'], where: 'server_id = ?', whereArgs: [copyFromServerId], limit: 1))
+          : copyFromLocalId != null
+              ? (await txn.query('local_inspection', columns: ['general_note'], where: 'local_id = ?', whereArgs: [copyFromLocalId], limit: 1))
+              : const <Map<String, Object?>>[];
+      final note = sourceNote.isEmpty ? null : sourceNote.first['general_note']?.toString();
+      if (note != null && note.trim().isNotEmpty) {
+        await txn.update('local_inspection', {'general_note': note}, where: 'local_id = ?', whereArgs: [id]);
       }
       return id;
     });
@@ -584,6 +782,18 @@ class LocalRepository {
         'baseline': 1,
       });
     }
+  }
+
+  /// Az általános megjegyzés mentése (csak nyitott jegyzőkönyvön).
+  Future<void> saveGeneralNote(String localId, String? note) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await _assertDraft(txn, localId);
+      await txn.update('local_inspection', {
+        'general_note': note?.trim().isEmpty ?? true ? null : note!.trim(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, where: 'local_id = ?', whereArgs: [localId]);
+    });
   }
 
   Future<LocalInspectionDraft?> inspection(String localId) async {
@@ -741,10 +951,20 @@ class LocalRepository {
     return rows.map(LocalSignature.fromMap).toList();
   }
 
-  Future<void> addSignature({required String inspectionLocalId, required String signerName, String? signerRole, required String localPath}) async {
+  /// Egy jegyzőkönyvön szerepenként (átadó / átvevő) egy szignó van: az új
+  /// ugyanabban a tranzakcióban lecseréli a régit. Visszaadja a lecserélt
+  /// szignók képfájljait, hogy a hívó törölhesse őket.
+  Future<List<String>> addSignature({required String inspectionLocalId, required String signerName, String? signerRole, required String localPath}) async {
     final db = await _db;
-    await db.transaction((txn) async {
+    return db.transaction((txn) async {
       await _assertDraft(txn, inspectionLocalId);
+      final previous = await txn.query('local_signature',
+          columns: ['local_id', 'local_path'],
+          where: signerRole == null ? 'inspection_local_id = ? AND signer_role IS NULL' : 'inspection_local_id = ? AND signer_role = ?',
+          whereArgs: signerRole == null ? [inspectionLocalId] : [inspectionLocalId, signerRole]);
+      for (final row in previous) {
+        await txn.delete('local_signature', where: 'local_id = ?', whereArgs: [row['local_id']]);
+      }
       await txn.insert('local_signature', {
         'local_id': _uuid.v4(),
         'server_id': null,
@@ -755,6 +975,7 @@ class LocalRepository {
         'storage_key': null,
         'signed_at': DateTime.now().toUtc().toIso8601String(),
       });
+      return [for (final row in previous) '${row['local_path']}'];
     });
   }
 
@@ -773,11 +994,11 @@ class LocalRepository {
     await db.update('local_inspection', {'server_id': serverId, 'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
   }
 
-  /// A jegyzőkönyv lezárása és az ebből következő szakasz-állapotváltás EGY
+  /// A jegyzőkönyv lezárása és az ebből következő út-állapotváltás EGY
   /// tranzakció: vagy minden lokális változás és sync művelet létrejön, vagy
   /// semmi. PICKUP lezárása elindítja a fuvart (ASSIGNED → IN_PROGRESS),
   /// DROPOFF lezárása lezárja (IN_PROGRESS → COMPLETED_PENDING_SYNC).
-  /// Visszaadja a szakasz új lokális státuszát.
+  /// Visszaadja az út új lokális státuszát.
   Future<String?> completeInspectionAndTransition(String localId) async {
     final db = await _db;
     return db.transaction((txn) async {
@@ -793,7 +1014,7 @@ class LocalRepository {
   }
 
   /// Ha a szükséges jegyzőkönyv már lezárt (egy korábbi appverzió lezárása
-  /// nem indította el / nem zárta le a fuvart), csak a szakasz-állapotváltás.
+  /// nem indította el / nem zárta le a fuvart), csak az út-állapotváltás.
   Future<String?> transitionLegAfterInspection(String legKey, String phase) async {
     final db = await _db;
     return db.transaction((txn) async {
@@ -845,12 +1066,12 @@ class LocalRepository {
     final done = Sqflite.firstIntValue(await db.rawQuery("SELECT COUNT(*) FROM sync_operation WHERE state = 'DONE'")) ?? 0;
     out.writeln('Függő szinkron műveletek: ${ops.length} (kész: $done)');
     for (final o in ops) {
-      out.writeln('  ${o['operation_type']} ${o['entity_id']} szakasz=${o['leg_key'] ?? '-'} állapot=${o['state']} '
+      out.writeln('  ${o['operation_type']} ${o['entity_id']} út=${o['leg_key'] ?? '-'} állapot=${o['state']} '
           'próbák=${o['attempts']} létrehozva=${o['created_at']} frissítve=${o['updated_at']}'
           '${o['last_error'] == null ? '' : ' hiba: ${o['last_error']}'}');
     }
     final legs = await db.query('cached_leg', orderBy: 'planned_start IS NULL, planned_start, sequence_no');
-    out.writeln('Szakaszok a telefonon: ${legs.length}');
+    out.writeln('Utak a telefonon: ${legs.length}');
     for (final l in legs) {
       out.writeln('  ${l['leg_key']} ${l['order_no']} #${l['sequence_no']} ${l['registration_number']} '
           'jármű=${l['order_vehicle_id']} állapot=${l['status']} tervezett=${l['planned_start'] ?? '-'} frissítve=${l['updated_at']}');
@@ -861,7 +1082,7 @@ class LocalRepository {
       final id = '${i['local_id']}';
       final photos = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM local_photo WHERE inspection_local_id = ?', [id])) ?? 0;
       final damages = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM local_damage WHERE inspection_local_id = ?', [id])) ?? 0;
-      out.writeln('  $id ${i['inspection_type']} szakasz=${i['leg_key']} állapot=${i['status']} szerver=${i['server_id'] ?? '-'} '
+      out.writeln('  $id ${i['inspection_type']} út=${i['leg_key']} állapot=${i['status']} szerver=${i['server_id'] ?? '-'} '
           'form=${i['form_type_id']} másolás=${i['copy_from_server_id'] ?? i['copy_from_local_id'] ?? '-'} '
           'fotó=$photos sérülés=$damages feltöltetlen=${await unsyncedItemCount(id)} frissítve=${i['updated_at']}');
     }
@@ -952,7 +1173,7 @@ class LocalRepository {
         [DateTime.now().toUtc().toIso8601String()]);
   }
 
-  /// Szakaszonként a legrosszabb nyitott művelet — ezt látja a sofőr.
+  /// Utanként a legrosszabb nyitott művelet — ezt látja a sofőr.
   Future<Map<String, LegSyncState>> legSyncStates() async {
     final db = await _db;
     final rows = await db.query('sync_operation', columns: ['leg_key', 'state'], where: "state <> 'DONE' AND leg_key IS NOT NULL");
@@ -1010,13 +1231,15 @@ extension LocalRepositoryEditing on LocalRepository {
     });
   }
 
-  Future<void> deleteSignature(String signatureLocalId) async {
+  /// Törli a szignót (csak nyitott jegyzőkönyvön); visszaadja a képfájlját.
+  Future<String?> deleteSignature(String signatureLocalId) async {
     final db = await _db;
-    await db.transaction((txn) async {
+    return db.transaction((txn) async {
       final rows = await txn.query('local_signature', where: 'local_id = ?', whereArgs: [signatureLocalId], limit: 1);
-      if (rows.isEmpty) return;
+      if (rows.isEmpty) return null;
       await _assertDraft(txn, '${rows.first['inspection_local_id']}');
       await txn.delete('local_signature', where: 'local_id = ?', whereArgs: [signatureLocalId]);
+      return rows.first['local_path']?.toString();
     });
   }
 }

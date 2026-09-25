@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -120,16 +121,16 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _pass() async {
-    // A sorrend szakaszonként kötelező (jegyzőkönyv → indítás → jegyzőkönyv →
-    // lezárás): egy szakasz első el nem végzett művelete (ütközés, hiba vagy
-    // még le nem telt backoff) a szakasz összes későbbi műveletét visszatartja.
-    // Más szakaszok műveleteit viszont nem — azok függetlenek.
+    // A sorrend utanként kötelező (jegyzőkönyv → indítás → jegyzőkönyv →
+    // lezárás): egy út első el nem végzett művelete (ütközés, hiba vagy
+    // még le nem telt backoff) az út összes későbbi műveletét visszatartja.
+    // Más utak műveleteit viszont nem — azok függetlenek.
     final blocked = <String>{};
     final operations = await local.pendingOperations();
     if (operations.isNotEmpty) log.info('sync', 'Szinkron kör: ${operations.length} függő művelet');
     for (final operation in operations) {
       final leg = operation.legKey ?? operation.entityId;
-      final what = '${operation.operationType} ${operation.entityId} (szakasz $leg, ${operation.attempts}. próba)';
+      final what = '${operation.operationType} ${operation.entityId} (út $leg, ${operation.attempts}. próba)';
       if (blocked.contains(leg)) continue;
       if (operation.state == 'CONFLICT' || !_isDue(operation)) {
         if (operation.state == 'CONFLICT') log.warn('sync', 'Ütközés miatt vár: $what', operation.lastError);
@@ -149,6 +150,20 @@ class SyncService extends ChangeNotifier {
             break;
           case 'COMPLETE_LEG':
             await _legTransition(operation.entityId, 'COMPLETED', () => api.complete(operation.entityId));
+            break;
+          case 'UPDATE_VEHICLE':
+            final changes = Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map);
+            await api.updateLegVehicle(operation.entityId, {for (final e in changes.entries) e.key: e.value?.toString()});
+            break;
+          case 'CREATE_ORDER':
+            final created = await api.createOrder(Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map));
+            final realKey = '${created['legKey']}';
+            await local.remapLegKey(operation.entityId, realKey, orderNo: '${created['orderNo']}');
+            log.info('sync', 'Új fuvar létrehozva a szerveren: ${created['orderNo']} (út $realKey)');
+            // Az út többi művelete még a régi azonosítót ismeri ebben a körben:
+            // a következő kör már a szerverével viszi tovább.
+            blocked.add(leg);
+            _again = true;
             break;
           default:
             throw StateError('Ismeretlen sync művelet: ${operation.operationType}');
@@ -171,7 +186,7 @@ class SyncService extends ChangeNotifier {
   }
 
   /// A szerver oldali indítás/lezárás idempotens (a már célállapotban lévő
-  /// szakaszra sem dob ütközést), így itt elég a hívás után a lokális státuszt
+  /// útra sem dob ütközést), így itt elég a hívás után a lokális státuszt
   /// a szerveréhez igazítani.
   Future<void> _legTransition(String legKey, String target, Future<void> Function() call) async {
     await call();
@@ -201,7 +216,7 @@ class SyncService extends ChangeNotifier {
 
   /// Lokális forrásból másolt jegyzőkönyv: a szerver a forrás szerveroldali
   /// példányából másol. A forrás az autó közvetlenül előző jegyzőkönyve; ha az
-  /// egy másik szakaszé és még nincs fent, ez a művelet hibával visszalép, és a
+  /// egy másik úté és még nincs fent, ez a művelet hibával visszalép, és a
   /// következő körben (a forrás feltöltése után) megy tovább.
   Future<String?> _copySource(LocalInspectionDraft draft) async {
     if (draft.copyFromServerId != null) return draft.copyFromServerId;
@@ -220,7 +235,7 @@ class SyncService extends ChangeNotifier {
     if (draft == null) throw StateError('Hiányzó lokális jegyzőkönyv: $localId');
 
     var serverId = draft.serverId;
-    log.info('sync', 'Jegyzőkönyv feltöltése: ${draft.inspectionType} $localId, szakasz ${draft.legKey}${serverId == null ? '' : ', szerver $serverId'}');
+    log.info('sync', 'Jegyzőkönyv feltöltése: ${draft.inspectionType} $localId, út ${draft.legKey}${serverId == null ? '' : ', szerver $serverId'}');
     if (serverId == null) {
       serverId = await api.createInspection(
         legKey: draft.legKey,
@@ -237,7 +252,7 @@ class SyncService extends ChangeNotifier {
     await api.saveValues(serverId, inspectionValuesPayload(
       await local.inspectionValues(localId),
       await local.phaseFieldIds(draft.formTypeId, draft.inspectionType),
-    ));
+    ), generalNote: draft.generalNote);
 
     var damages = await local.damages(localId);
     for (final damage in damages.where((d) => !d.baseline && d.serverId == null)) {

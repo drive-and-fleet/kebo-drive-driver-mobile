@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/local_models.dart';
+import '../../local/local_repository.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
@@ -30,7 +31,7 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
   void initState() {
     super.initState();
     log.info('ui', 'Képernyő: fuvar adatlap ${widget.legKey}');
-    // A háttérszinkron a szakasz státuszát és a sync jelzést is változtatja.
+    // A háttérszinkron az út státuszát és a sync jelzést is változtatja.
     widget.services.sync.addListener(_refresh);
     _load();
   }
@@ -41,12 +42,75 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     super.dispose();
   }
 
+  /// A sofőr javítja a rendszámot, a használó e-mail-címét, vagy megad egy további
+  /// címet, amelyre a jegyzőkönyvek is kimennek. A telefonon azonnal érvényes, a
+  /// szinkron viszi fel; a szerver naplózza, és az iroda is látja.
+  Future<void> _editVehicle(DriverLeg leg) async {
+    final plate = TextEditingController(text: leg.registrationNumber);
+    final userEmail = TextEditingController(text: leg.vehicleUserEmail ?? '');
+    final extraEmail = TextEditingController(text: leg.vehicleExtraEmail ?? '');
+    final form = GlobalKey<FormState>();
+    String? email(String? v) =>
+        v == null || v.trim().isEmpty || RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v.trim()) ? null : 'Érvénytelen e-mail-cím';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Autó adatai'),
+        content: Form(
+          key: form,
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextFormField(
+                controller: plate,
+                decoration: const InputDecoration(labelText: 'Rendszám'),
+                textCapitalization: TextCapitalization.characters,
+                validator: (v) => v == null || v.trim().isEmpty ? 'Kötelező' : null,
+              ),
+              TextFormField(controller: userEmail, decoration: const InputDecoration(labelText: 'Használó e-mail'), keyboardType: TextInputType.emailAddress, validator: email),
+              TextFormField(controller: extraEmail, decoration: const InputDecoration(labelText: 'További e-mail a jegyzőkönyvekhez'), keyboardType: TextInputType.emailAddress, validator: email),
+              const SizedBox(height: 8),
+              const Text('A változást az iroda is látja (naplózva). A jegyzőkönyvek a megadott címekre mennek.', style: TextStyle(fontSize: 13)),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
+          FilledButton(
+            onPressed: () {
+              if (form.currentState?.validate() ?? false) Navigator.pop(dialogContext, true);
+            },
+            child: const Text('Mentés'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      try {
+        final changed = await widget.services.work.updateLegVehicle(leg,
+            registrationNumber: plate.text.trim().toUpperCase(), userEmail: userEmail.text.trim(), extraEmail: extraEmail.text.trim());
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(changed ? 'Mentve a telefonon; a szinkron felviszi.' : 'Nem volt változás.'),
+          ));
+        }
+        await _load(quiet: true);
+      } catch (e) {
+        if (mounted) setState(() => _error = '$e');
+      }
+    }
+    plate.dispose();
+    userEmail.dispose();
+    extraEmail.dispose();
+  }
+
   /// Háttérfrissítés: nem nyúl a folyamatban lévő művelet busy jelzéséhez.
   void _refresh() => _load(quiet: true);
 
   Future<void> _load({bool quiet = false}) async {
-    final leg = await widget.services.local.cachedLeg(widget.legKey);
-    final syncState = (await widget.services.local.legSyncStates())[widget.legKey];
+    // A telefonon felvett új fuvar a szinkron után a szerver azonosítóját kapja.
+    final legKey = LocalRepository.currentLegKey(widget.legKey);
+    final leg = await widget.services.local.cachedLeg(legKey);
+    final syncState = (await widget.services.local.legSyncStates())[legKey];
     final returnLeg = leg == null ? null : await widget.services.local.returnLegFor(leg);
     if (!mounted) return;
     setState(() {
@@ -174,7 +238,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                     icon: const Icon(Icons.done_all),
                     label: const Text('Fuvar lezárása'),
                   ),
-                if (leg.status == 'ASSIGNED') ...[
+                // A még fel nem küldött új fuvar a szerveren még nem létezik: nem adható át.
+                if (leg.status == 'ASSIGNED' && !LocalRepository.isLocalLeg(leg.legKey)) ...[
                   const SizedBox(height: 10),
                   OutlinedButton.icon(
                     onPressed: _busy
@@ -184,6 +249,14 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                             )),
                     icon: const Icon(Icons.swap_horiz),
                     label: const Text('Átadás másik sofőrnek'),
+                  ),
+                ],
+                if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status)) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : () => _editVehicle(leg),
+                    icon: const Icon(Icons.edit_note),
+                    label: const Text('Autó adatai (rendszám, e-mail)'),
                   ),
                 ],
                 const SizedBox(height: 16),
@@ -217,18 +290,23 @@ class _InfoCard extends StatelessWidget {
             StatusPlate(leg.status),
           ]),
           const SizedBox(height: 6),
-          Text('Fuvar: ${leg.orderNo} • Szakasz #${leg.sequenceNo}', style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+          Text('Fuvar: ${leg.orderNo} • Út #${leg.sequenceNo}', style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
           const Divider(height: 24),
-          Text('Felvétel: ${leg.fromAddress}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: AppText.body)),
+          Text('Felvétel: ${leg.fromPlace}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: AppText.body)),
           if (leg.fromContactName != null) Text('Kapcsolat: ${leg.fromContactName} ${leg.fromContactPhone ?? ''}'),
+          if (leg.fromStopNotes != null) Text('Megjegyzés: ${leg.fromStopNotes}', style: const TextStyle(color: AppColors.ink600)),
           const SizedBox(height: 10),
-          Text('Leadás: ${leg.toAddress}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: AppText.body)),
+          Text('Leadás: ${leg.toPlace}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: AppText.body)),
           if (leg.toContactName != null) Text('Kapcsolat: ${leg.toContactName} ${leg.toContactPhone ?? ''}'),
-          if (leg.vehicleUserName != null) ...[
-            const Divider(height: 24),
-            Text('Autó használója: ${leg.vehicleUserName}'),
-            if (leg.vehicleUserPhone != null) Text(leg.vehicleUserPhone!),
-            if (leg.vehicleUserEmail != null) Text(leg.vehicleUserEmail!),
+          if (leg.toStopNotes != null) Text('Megjegyzés: ${leg.toStopNotes}', style: const TextStyle(color: AppColors.ink600)),
+          const Divider(height: 24),
+          Text('Autó használója: ${leg.vehicleUserName ?? '—'}'),
+          if (leg.vehicleUserPhone != null) Text(leg.vehicleUserPhone!),
+          Text('E-mail: ${leg.vehicleUserEmail ?? '—'}'),
+          Text('További e-mail a jegyzőkönyvekhez: ${leg.vehicleExtraEmail ?? '—'}'),
+          if (leg.vehicleNotes != null) ...[
+            const SizedBox(height: 8),
+            Text('Megjegyzés: ${leg.vehicleNotes}', style: const TextStyle(fontWeight: FontWeight.w600)),
           ],
         ]),
       ),
@@ -251,8 +329,9 @@ class _RoundTripNotice extends StatelessWidget {
     if (leg.isOutbound) {
       title = 'Körfuvar · odaút';
       text = returnLeg == null
-          ? 'A leadás után ne menj el: várd meg az autót itt: ${leg.toAddress}. '
-              'A visszaút még nincs kiosztva neked – szólj az irodának.'
+          ? 'A leadás után várd meg az autót itt: ${leg.toAddress}, ha a visszautat is te viszed. '
+              'A visszaút nincs nálad: az odaút teljesítése után a Szabad fuvarok között felveheted, '
+              'ha addig senki más nem kapja meg – kérdezd az irodát.'
           : 'A leadás után ne menj el: várd meg, amíg az autó elkészül itt: ${leg.toAddress}, '
               'majd vidd vissza ide: ${returnLeg!.toAddress}'
               '${returnLeg!.plannedStart == null ? '' : ' (tervezett visszaindulás: ${time(returnLeg!.plannedStart)})'}.';

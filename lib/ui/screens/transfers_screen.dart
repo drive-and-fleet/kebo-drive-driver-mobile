@@ -63,7 +63,7 @@ class _TransfersScreenState extends State<TransfersScreen> {
             Card(
               child: ListTile(
                 title: Text('Átadás • ${item['status']}'),
-                subtitle: Text('Szakasz: ${item['orderLegId']}\nKezdeményező: ${item['fromDriverId']} → ${item['toDriverId']}'),
+                subtitle: Text('Út: ${item['orderLegId']}\nKezdeményező: ${item['fromDriverId']} → ${item['toDriverId']}'),
                 isThreeLine: true,
                 trailing: item['status'] == 'PENDING'
                     ? Wrap(spacing: 4, children: [

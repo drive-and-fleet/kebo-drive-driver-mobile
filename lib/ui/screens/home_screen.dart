@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_services.dart';
 import 'my_work_screen.dart';
+import 'new_order_screen.dart';
 import 'search_screen.dart';
 import 'sync_screen.dart';
 import 'transfers_screen.dart';
@@ -67,6 +68,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: IndexedStack(index: _index, children: pages),
+      floatingActionButton: _index == 0
+          ? FloatingActionButton.extended(
+              onPressed: () async {
+                final created = await Navigator.of(context).push<bool>(MaterialPageRoute(
+                  builder: (_) => NewOrderScreen(services: widget.services),
+                ));
+                if (created == true) await _myWorkKey.currentState?.refresh();
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Új fuvar'),
+            )
+          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) {
