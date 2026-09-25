@@ -72,6 +72,7 @@ class LegCard extends StatelessWidget {
         'COMPLETED_PENDING_SYNC' => 'Szinkronra vár',
         'COMPLETED' => 'Teljesítve',
         'CANCELLED' => 'Lemondva',
+        'REVOKED' => 'Már nem a tiéd',
         _ => value,
       };
 }

@@ -28,7 +28,11 @@ class _FleetDriverAppState extends State<FleetDriverApp> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     log.info('app', 'Életciklus: ${state.name}');
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) unawaited(log.flush());
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      unawaited(log.flush());
+      widget.services.work.onBackground();
+    }
+    if (state == AppLifecycleState.resumed) widget.services.work.onForeground();
   }
 
   @override
@@ -36,6 +40,7 @@ class _FleetDriverAppState extends State<FleetDriverApp> with WidgetsBindingObse
     widget.services.auth.removeListener(_changed);
     WidgetsBinding.instance.removeObserver(this);
     widget.services.sync.disposeService();
+    widget.services.work.stopAutoRefresh();
     super.dispose();
   }
 

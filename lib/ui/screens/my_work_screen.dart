@@ -63,17 +63,19 @@ class MyWorkScreenState extends State<MyWorkScreen> {
     super.initState();
     log.info('ui', 'Képernyő: Munkáim');
     widget.services.sync.addListener(_refreshLocal);
+    widget.services.work.addListener(_refreshLocal);
     _load();
   }
 
   @override
   void dispose() {
     widget.services.sync.removeListener(_refreshLocal);
+    widget.services.work.removeListener(_refreshLocal);
     super.dispose();
   }
 
-  /// A háttérszinkron változásai (státusz, feltöltési jelzés) hálózat nélkül,
-  /// a lokális adatbázisból.
+  /// A háttérszinkron és az automatikus letöltés változásai (státusz, feltöltési
+  /// jelzés, eltűnt fuvar), a lokális adatbázisból.
   Future<void> _refreshLocal() async {
     final legs = await widget.services.local.cachedLegs();
     final states = await widget.services.local.legSyncStates();

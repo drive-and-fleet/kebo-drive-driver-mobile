@@ -30,12 +30,61 @@ class LocalRepository {
     final batch = db.batch();
     for (final leg in legs) {
       final map = leg.toCacheMap();
-      if (pending.contains(leg.legKey) && localStatus[leg.legKey] != null) {
+      if (pending.contains(leg.legKey) && localStatus[leg.legKey] != null && localStatus[leg.legKey] != 'REVOKED') {
         map['status'] = localStatus[leg.legKey];
       }
       batch.insert('cached_leg', map, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
+  }
+
+  /// A szerver teljes listája a sofőr még elvégzendő szakaszairól ([serverKeys])
+  /// alapján rendbe teszi a telefont: ami itt még elvégzendő (kiosztva / folyamatban),
+  /// de a szerver már nem adja (lemondták, visszavették, átadták), az eltűnik.
+  /// Ha viszont van hozzá még fel nem töltött helyi munka (nyitott vagy lezárt, de
+  /// nem szinkronizált jegyzőkönyv, függő művelet), nem töröljük: REVOKED lesz,
+  /// hogy a sofőr lássa, és semmi ne vesszen el. Csak a letöltés indulása
+  /// ([fetchedAt]) előtt frissült sorokat érinti, így egy közben felvett fuvar
+  /// nem tűnik el.
+  Future<({List<String> removed, List<String> revoked})> reconcileAssigned(Set<String> serverKeys, DateTime fetchedAt) async {
+    final db = await _db;
+    final removed = <String>[];
+    final revoked = <String>[];
+    await db.transaction((txn) async {
+      final rows = await txn.query('cached_leg',
+          columns: ['leg_key', 'status'],
+          where: "status IN ('PLANNED','ASSIGNED','IN_PROGRESS','REVOKED') AND updated_at < ?",
+          whereArgs: [fetchedAt.toUtc().toIso8601String()]);
+      for (final row in rows) {
+        final legKey = '${row['leg_key']}';
+        if (serverKeys.contains(legKey)) continue;
+        final work = Sqflite.firstIntValue(await txn.rawQuery('''
+          SELECT (SELECT COUNT(*) FROM sync_operation WHERE leg_key = ? AND state <> 'DONE')
+               + (SELECT COUNT(*) FROM local_inspection WHERE leg_key = ? AND status <> 'SYNCED') AS count
+        ''', [legKey, legKey])) ?? 0;
+        if (work > 0) {
+          if (row['status'] != 'REVOKED') {
+            await txn.update('cached_leg', {'status': 'REVOKED', 'updated_at': DateTime.now().toUtc().toIso8601String()},
+                where: 'leg_key = ?', whereArgs: [legKey]);
+            revoked.add(legKey);
+          }
+        } else {
+          await txn.delete('cached_leg', where: 'leg_key = ?', whereArgs: [legKey]);
+          removed.add(legKey);
+        }
+      }
+    });
+    return (removed: removed, revoked: revoked);
+  }
+
+  Future<Set<String>> cachedLegKeys() async {
+    final db = await _db;
+    return {for (final row in await db.query('cached_leg', columns: ['leg_key'])) '${row['leg_key']}'};
+  }
+
+  Future<bool> hasForms(String serviceOrgId) async {
+    final db = await _db;
+    return (await db.query('cached_form_type', columns: ['id'], where: 'service_org_id = ?', whereArgs: [serviceOrgId], limit: 1)).isNotEmpty;
   }
 
   Future<List<DriverLeg>> cachedLegs() async {

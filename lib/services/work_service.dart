@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
+
 import '../api/driver_api.dart';
 import '../local/local_repository.dart';
 import '../logging/app_log.dart';
@@ -8,30 +11,106 @@ import '../models/models.dart';
 import 'inspection_validator.dart';
 import 'sync_service.dart';
 
-class WorkService {
+/// A sofőr munkái. Local-first: a lista mindig a telefonról jön; a szerverről
+/// letöltött állapot a helyi tárba kerül, és ami már nem a sofőré (lemondták,
+/// visszavették, átadták), az onnan eltűnik.
+///
+/// Automatikus frissítés, akkumulátorkímélően: csak amíg az app előtérben van,
+/// [_autoInterval]-onként, valamint amikor az app újra előtérbe kerül, és amikor
+/// visszajön a hálózat — de legfeljebb [_minGap]-enként, és egyetlen kis kéréssel
+/// (űrlapot és előzményt csak az újonnan kapott szakaszokhoz tölt le).
+class WorkService extends ChangeNotifier {
   WorkService(this.api, this.local, this.sync);
   final DriverApi api;
   final LocalRepository local;
   final SyncService sync;
 
+  static const _autoInterval = Duration(minutes: 5);
+  static const _minGap = Duration(minutes: 1);
+
+  bool Function() _active = () => false;
+  Timer? _timer;
+  StreamSubscription<List<ConnectivityResult>>? _connectivity;
+  DateTime? _lastRefresh;
+  Future<void>? _inFlight;
+
+  /// [active]: be van-e jelentkezve a sofőr (enélkül nincs mit letölteni).
+  void startAutoRefresh(bool Function() active) {
+    _active = active;
+    _connectivity ??= Connectivity().onConnectivityChanged.listen((results) {
+      if (!results.contains(ConnectivityResult.none)) unawaited(_auto('hálózat visszajött'));
+    });
+    onForeground();
+  }
+
+  /// Előtérben: azonnal egy (korlátozott) frissítés, utána időzítve.
+  void onForeground() {
+    _timer?.cancel();
+    _timer = Timer.periodic(_autoInterval, (_) => unawaited(_auto('időzített')));
+    unawaited(_auto('előtérbe került'));
+  }
+
+  /// Háttérben nincs időzítő: nem fogyaszt akkumulátort.
+  void onBackground() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<void> stopAutoRefresh() async {
+    onBackground();
+    await _connectivity?.cancel();
+    _connectivity = null;
+  }
+
+  Future<void> _auto(String why) async {
+    if (!_active() || _timer == null) return;
+    final last = _lastRefresh;
+    if (last != null && DateTime.now().difference(last) < _minGap) return;
+    try {
+      await _refreshFromServer(full: false, why: why);
+    } catch (e) {
+      log.debug('work', 'Automatikus frissítés most nem sikerült ($why): $e');
+    }
+  }
+
+  /// Egyszerre csak egy letöltés fut; a második hívó megvárja az elsőt.
+  Future<void> _refreshFromServer({required bool full, required String why}) {
+    return _inFlight ??= _download(full: full, why: why).whenComplete(() => _inFlight = null);
+  }
+
+  Future<void> _download({required bool full, required String why}) async {
+    final fetchedAt = DateTime.now();
+    final known = await local.cachedLegKeys();
+    final online = await api.assigned();
+    _lastRefresh = DateTime.now();
+    await local.cacheLegs(online);
+    final result = await local.reconcileAssigned({for (final leg in online) leg.legKey}, fetchedAt);
+    final fresh = online.where((leg) => !known.contains(leg.legKey)).toList();
+    log.info('work', 'Munkák letöltve ($why): ${online.length} szakasz, új: ${fresh.length}, '
+        'eltűnt: ${result.removed.length}${result.revoked.isEmpty ? '' : ', már nem a sofőré, de helyi munka van rajta: ${result.revoked.join(', ')}'}');
+    if (result.removed.isNotEmpty) log.info('work', 'A telefonról törölve (lemondva / visszavéve / átadva): ${result.removed.join(', ')}');
+
+    // Űrlap és másolási előzmény: kézi frissítéskor mindenhez, automatikusan
+    // csak ahhoz, ami új a telefonon (vagy aminek a szolgáltatójához nincs űrlap).
+    final targets = full ? online : fresh;
+    for (final serviceId in targets.map((e) => e.serviceOrgId).toSet()) {
+      if (!full && await local.hasForms(serviceId)) continue;
+      await local.cacheForms(serviceId, await api.forms(serviceId));
+    }
+    for (final leg in targets) {
+      try {
+        await local.cachePreviousInspections(leg.legKey, await api.previousInspections(leg.legKey));
+      } catch (e) {
+        log.warn('work', 'Előző jegyzőkönyvek nem jöttek le: ${leg.legKey}', e);
+      }
+    }
+    notifyListeners();
+  }
+
   Future<List<DriverLeg>> myWork({bool refreshOnline = true}) async {
     if (refreshOnline) {
       try {
-        final online = await api.assigned();
-        await local.cacheLegs(online);
-        log.info('work', 'Munkák letöltve: ${online.length} szakasz');
-        final serviceIds = online.map((e) => e.serviceOrgId).toSet();
-        for (final serviceId in serviceIds) {
-          final forms = await api.forms(serviceId);
-          await local.cacheForms(serviceId, forms);
-        }
-        for (final leg in online) {
-          try {
-            await local.cachePreviousInspections(leg.legKey, await api.previousInspections(leg.legKey));
-          } catch (e) {
-            log.warn('work', 'Előző jegyzőkönyvek nem jöttek le: ${leg.legKey}', e);
-          }
-        }
+        await _refreshFromServer(full: true, why: 'kézi');
       } catch (e) {
         // Offline is a normal operating mode. Return the local work package.
         log.warn('work', 'Munkák frissítése nem sikerült, a telefonon tárolt munka látszik', e);

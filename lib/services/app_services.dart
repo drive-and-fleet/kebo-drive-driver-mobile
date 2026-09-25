@@ -34,7 +34,7 @@ class AppServices {
     final api = DriverApi(http, auth);
     final sync = SyncService(api, local);
     await sync.initialize();
-    final work = WorkService(api, local, sync);
+    final work = WorkService(api, local, sync)..startAutoRefresh(() => auth.isSignedIn);
     return AppServices._(
       local: local,
       fileStore: fileStore,

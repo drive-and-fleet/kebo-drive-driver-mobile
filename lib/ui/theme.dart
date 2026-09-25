@@ -39,7 +39,7 @@ class AppColors {
         'PLANNED' || 'PENDING' => (signalAmber, tintAmber),
         'ACCEPTED' || 'ACTIVE' || 'COMPLETED' => (signalGreen, tintGreen),
         'IN_PROGRESS' || 'ASSIGNED' || 'DRAFT' || 'COMPLETED_PENDING_SYNC' => (signalBlue, tintBlue),
-        'REJECTED' || 'WITHDRAWN' || 'CANCELLED' || 'SUSPENDED' || 'ERROR' || 'CONFLICT' => (signalRed, tintRed),
+        'REJECTED' || 'WITHDRAWN' || 'CANCELLED' || 'REVOKED' || 'SUSPENDED' || 'ERROR' || 'CONFLICT' => (signalRed, tintRed),
         _ => (ink600, sheet100),
       };
 }

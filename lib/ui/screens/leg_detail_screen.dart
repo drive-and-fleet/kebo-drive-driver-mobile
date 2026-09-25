@@ -142,8 +142,20 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
               children: [
                 if (_busy) const Padding(padding: EdgeInsets.only(bottom: 12), child: LinearProgressIndicator()),
                 if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
+                if (leg.status == 'REVOKED') ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    color: AppColors.tintRed,
+                    child: const Text(
+                      'Ezt a fuvart közben lemondták, visszavették vagy másnak adták, ezért már nem a tiéd. '
+                      'A telefonon lévő, még fel nem töltött adatai megmaradnak. Szólj az irodának.',
+                      style: TextStyle(color: AppColors.signalRed, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _InfoCard(leg: leg),
-                if ((leg.isOutbound || leg.isReturn) && leg.status != 'COMPLETED' && leg.status != 'CANCELLED') ...[
+                if ((leg.isOutbound || leg.isReturn) && !const {'COMPLETED', 'CANCELLED', 'REVOKED'}.contains(leg.status)) ...[
                   const SizedBox(height: 12),
                   _RoundTripNotice(leg: leg, returnLeg: _returnLeg, time: _time),
                 ],
