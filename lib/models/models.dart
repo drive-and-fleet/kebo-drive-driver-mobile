@@ -68,6 +68,8 @@ class DriverLeg {
     this.legCount,
     this.fromStopType,
     this.toStopType,
+    this.fromStopTypeName,
+    this.toStopTypeName,
   });
 
   final String? legId;
@@ -100,6 +102,10 @@ class DriverLeg {
   /// A két végpont megállótípusa (PICKUP, DROPOFF, WAIT, régi adatban INTERMEDIATE).
   final String? fromStopType;
   final String? toStopType;
+
+  /// A megállótípus neve a Beállításokból (pl. „Szerviz (várakozással)”), ha van.
+  final String? fromStopTypeName;
+  final String? toStopTypeName;
 
   /// Körfuvar odaútja: a cél egy várakozó megálló, ahol a sofőr megvárja az autót,
   /// és onnan viszi tovább (visszaút).
@@ -134,6 +140,8 @@ class DriverLeg {
         legCount: int.tryParse('${json['legCount'] ?? ''}'),
         fromStopType: json['fromStopType']?.toString(),
         toStopType: json['toStopType']?.toString(),
+        fromStopTypeName: json['fromStopTypeName']?.toString(),
+        toStopTypeName: json['toStopTypeName']?.toString(),
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -161,6 +169,8 @@ class DriverLeg {
         'to_contact_phone': toContactPhone,
         'from_stop_type': fromStopType,
         'to_stop_type': toStopType,
+        'from_stop_type_name': fromStopTypeName,
+        'to_stop_type_name': toStopTypeName,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -189,6 +199,8 @@ class DriverLeg {
         toContactPhone: json['to_contact_phone']?.toString(),
         fromStopType: json['from_stop_type']?.toString(),
         toStopType: json['to_stop_type']?.toString(),
+        fromStopTypeName: json['from_stop_type_name']?.toString(),
+        toStopTypeName: json['to_stop_type_name']?.toString(),
       );
 
   DriverLeg copyWithStatus(String newStatus) => DriverLeg(
@@ -217,6 +229,8 @@ class DriverLeg {
         legCount: legCount,
         fromStopType: fromStopType,
         toStopType: toStopType,
+        fromStopTypeName: fromStopTypeName,
+        toStopTypeName: toStopTypeName,
       );
 }
 

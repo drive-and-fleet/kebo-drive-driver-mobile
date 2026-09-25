@@ -12,7 +12,7 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
       onUpgrade: _upgrade,
@@ -47,6 +47,8 @@ class LocalDatabase {
         to_contact_phone TEXT,
         from_stop_type TEXT,
         to_stop_type TEXT,
+        from_stop_type_name TEXT,
+        to_stop_type_name TEXT,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -256,6 +258,11 @@ class LocalDatabase {
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE cached_leg ADD COLUMN from_stop_type TEXT');
       await db.execute('ALTER TABLE cached_leg ADD COLUMN to_stop_type TEXT');
+    }
+    // v4: a megállótípus neve a Beállításokból.
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE cached_leg ADD COLUMN from_stop_type_name TEXT');
+      await db.execute('ALTER TABLE cached_leg ADD COLUMN to_stop_type_name TEXT');
     }
   }
 

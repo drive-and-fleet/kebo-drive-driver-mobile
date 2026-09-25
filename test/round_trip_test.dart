@@ -35,10 +35,11 @@ void main() {
     expect(old.isOutbound || old.isReturn, isFalse);
   });
 
-  test('a megállótípus megmarad a helyi gyorsítótárban és az állapotváltáskor', () {
-    final leg = DriverLeg.fromJson(_leg(seq: 1, from: 'PICKUP', to: 'WAIT'));
+  test('a megállótípus és a neve megmarad a helyi gyorsítótárban és az állapotváltáskor', () {
+    final leg = DriverLeg.fromJson({..._leg(seq: 1, from: 'PICKUP', to: 'WAIT'), 'toStopTypeName': 'Szerviz (várakozással)'});
     final cached = DriverLeg.fromCacheMap(leg.toCacheMap());
     expect(cached.toStopType, 'WAIT');
+    expect(cached.toStopTypeName, 'Szerviz (várakozással)');
     expect(cached.copyWithStatus('IN_PROGRESS').isOutbound, isTrue);
   });
 }

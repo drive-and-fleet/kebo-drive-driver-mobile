@@ -47,9 +47,9 @@ class LegCard extends StatelessWidget {
                 child: SyncBadge(syncState),
               ),
               const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider(height: 1)),
-              _AddressLine(icon: Icons.trip_origin, label: leg.isReturn ? 'Visszaindulás' : 'Felvétel', address: leg.fromAddress, time: leg.plannedStart),
+              _AddressLine(icon: Icons.trip_origin, label: leg.fromStopTypeName ?? (leg.isReturn ? 'Visszaindulás' : 'Felvétel'), address: leg.fromAddress, time: leg.plannedStart),
               const SizedBox(height: 6),
-              _AddressLine(icon: leg.isOutbound ? Icons.hourglass_top : Icons.flag_outlined, label: leg.isOutbound ? 'Várakozás' : 'Leadás', address: leg.toAddress, time: leg.plannedEnd),
+              _AddressLine(icon: leg.isOutbound ? Icons.hourglass_top : Icons.flag_outlined, label: leg.toStopTypeName ?? (leg.isOutbound ? 'Várakozás' : 'Leadás'), address: leg.toAddress, time: leg.plannedEnd),
               const SizedBox(height: 10),
               Row(children: [
                 Expanded(child: Text(
