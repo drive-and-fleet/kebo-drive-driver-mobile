@@ -70,6 +70,8 @@ class DriverLeg {
     this.toStopType,
     this.fromStopTypeName,
     this.toStopTypeName,
+    this.fromStopWaits,
+    this.toStopWaits,
   });
 
   final String? legId;
@@ -107,12 +109,17 @@ class DriverLeg {
   final String? fromStopTypeName;
   final String? toStopTypeName;
 
+  /// A megálló viselkedésének „a sofőr megvárja az autót” jelzője a Beállításokból
+  /// (STOP_BEHAVIOR.driver_waits). Null a régi szervertől / régi gyorsítótárból.
+  final bool? fromStopWaits;
+  final bool? toStopWaits;
+
   /// Körfuvar odaútja: a cél egy várakozó megálló, ahol a sofőr megvárja az autót,
-  /// és onnan viszi tovább (visszaút).
-  bool get isOutbound => toStopType == 'WAIT';
+  /// és onnan viszi tovább (visszaút). Jelző nélkül a régi WAIT kód dönt.
+  bool get isOutbound => toStopWaits ?? toStopType == 'WAIT';
 
   /// Körfuvar visszaútja: a várakozó megállóból indul.
-  bool get isReturn => fromStopType == 'WAIT';
+  bool get isReturn => fromStopWaits ?? fromStopType == 'WAIT';
 
   factory DriverLeg.fromJson(Map<String, dynamic> json) => DriverLeg(
         legId: json['legId']?.toString(),
@@ -142,6 +149,8 @@ class DriverLeg {
         toStopType: json['toStopType']?.toString(),
         fromStopTypeName: json['fromStopTypeName']?.toString(),
         toStopTypeName: json['toStopTypeName']?.toString(),
+        fromStopWaits: _flag(json['fromStopWaits']),
+        toStopWaits: _flag(json['toStopWaits']),
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -171,6 +180,8 @@ class DriverLeg {
         'to_stop_type': toStopType,
         'from_stop_type_name': fromStopTypeName,
         'to_stop_type_name': toStopTypeName,
+        'from_stop_waits': fromStopWaits == null ? null : (fromStopWaits! ? 1 : 0),
+        'to_stop_waits': toStopWaits == null ? null : (toStopWaits! ? 1 : 0),
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -201,6 +212,8 @@ class DriverLeg {
         toStopType: json['to_stop_type']?.toString(),
         fromStopTypeName: json['from_stop_type_name']?.toString(),
         toStopTypeName: json['to_stop_type_name']?.toString(),
+        fromStopWaits: _flag(json['from_stop_waits']),
+        toStopWaits: _flag(json['to_stop_waits']),
       );
 
   DriverLeg copyWithStatus(String newStatus) => DriverLeg(
@@ -231,6 +244,8 @@ class DriverLeg {
         toStopType: toStopType,
         fromStopTypeName: fromStopTypeName,
         toStopTypeName: toStopTypeName,
+        fromStopWaits: fromStopWaits,
+        toStopWaits: toStopWaits,
       );
 }
 
@@ -314,6 +329,17 @@ class PreviousInspection {
   final List<Map<String, dynamic>> values;
   final List<Map<String, dynamic>> damages;
   final List<Map<String, dynamic>> photos;
+}
+
+/// MySQL BOOLEAN (1/0), JSON bool vagy szöveg → bool; hiányzó érték → null.
+bool? _flag(dynamic value) {
+  if (value == null) return null;
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = '$value'.toLowerCase();
+  if (text == 'true' || text == '1') return true;
+  if (text == 'false' || text == '0') return false;
+  return null;
 }
 
 DateTime? _date(dynamic value) {

@@ -51,7 +51,8 @@ class LocalRepository {
     final db = await _db;
     final rows = await db.query(
       'cached_leg',
-      where: "order_vehicle_id = ? AND sequence_no > ? AND from_stop_type = 'WAIT' AND status != 'CANCELLED'",
+      where: "order_vehicle_id = ? AND sequence_no > ? AND status != 'CANCELLED' "
+          "AND (from_stop_waits = 1 OR (from_stop_waits IS NULL AND from_stop_type = 'WAIT'))",
       whereArgs: [outbound.orderVehicleId, outbound.sequenceNo],
       orderBy: 'sequence_no',
       limit: 1,

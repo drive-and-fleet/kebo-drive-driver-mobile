@@ -42,4 +42,15 @@ void main() {
     expect(cached.toStopTypeName, 'Szerviz (várakozással)');
     expect(cached.copyWithStatus('IN_PROGRESS').isOutbound, isTrue);
   });
+
+  test('a Beállításokban megadott viselkedés jelzője dönt, nem a kód', () {
+    final custom = DriverLeg.fromJson({..._leg(seq: 1, from: 'PICKUP', to: 'B_1A2B3C4D'), 'toStopWaits': 1, 'fromStopWaits': 0});
+    expect(custom.isOutbound, isTrue);
+    expect(custom.isReturn, isFalse);
+    final notWaiting = DriverLeg.fromJson({..._leg(seq: 2, from: 'WAIT', to: 'DROPOFF'), 'fromStopWaits': false});
+    expect(notWaiting.isReturn, isFalse);
+    final cached = DriverLeg.fromCacheMap(custom.toCacheMap());
+    expect(cached.toStopWaits, isTrue);
+    expect(cached.copyWithStatus('IN_PROGRESS').isOutbound, isTrue);
+  });
 }

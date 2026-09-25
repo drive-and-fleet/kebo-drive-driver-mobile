@@ -12,7 +12,7 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
       onUpgrade: _upgrade,
@@ -49,6 +49,8 @@ class LocalDatabase {
         to_stop_type TEXT,
         from_stop_type_name TEXT,
         to_stop_type_name TEXT,
+        from_stop_waits INTEGER,
+        to_stop_waits INTEGER,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -263,6 +265,11 @@ class LocalDatabase {
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE cached_leg ADD COLUMN from_stop_type_name TEXT');
       await db.execute('ALTER TABLE cached_leg ADD COLUMN to_stop_type_name TEXT');
+    }
+    // v5: a megálló viselkedésének „a sofőr megvárja” jelzője (körfuvar), a Beállításokból.
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE cached_leg ADD COLUMN from_stop_waits INTEGER');
+      await db.execute('ALTER TABLE cached_leg ADD COLUMN to_stop_waits INTEGER');
     }
   }
 
