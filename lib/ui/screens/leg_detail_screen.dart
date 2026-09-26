@@ -145,7 +145,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
           builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: phase),
         ));
         // Körfuvar: a leadás után a sofőr nem mehet el — megvárja az autót, és visszaviszi.
-        if (phase == 'DROPOFF' && leg.isOutbound) {
+        // Csak ha a visszaút is az övé: ha másnak osztották ki, neki nincs mire várnia.
+        if (phase == 'DROPOFF' && leg.isOutbound && await widget.services.local.returnLegFor(leg) != null) {
           final closed = await widget.services.local.inspectionForLeg(leg.legKey, 'DROPOFF');
           if (closed != null && closed.status != 'DRAFT' && mounted) await _showWaitDialog(leg);
         }
@@ -230,7 +231,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                     ),
                   ),
                 ],
-                if ((leg.isOutbound || leg.isReturn) && !const {'COMPLETED', 'CANCELLED', 'REVOKED'}.contains(leg.status)) ...[
+                // A „várd meg az autót” jelzés csak annak szól, akinél a visszaút is van.
+                if ((leg.isReturn || (leg.isOutbound && _returnLeg != null)) && !const {'COMPLETED', 'CANCELLED', 'REVOKED'}.contains(leg.status)) ...[
                   const SizedBox(height: 12),
                   _RoundTripNotice(leg: leg, returnLeg: _returnLeg, time: _time),
                 ],
