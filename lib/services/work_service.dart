@@ -25,6 +25,9 @@ class WorkService extends ChangeNotifier {
   final LocalRepository local;
   final SyncService sync;
 
+  /// A helyzetmegosztás adja: hol van most a telefon (a jegyzőkönyv lezárásakor mentjük).
+  Future<({double latitude, double longitude, double? accuracy})?> Function()? positionProvider;
+
   static const _autoInterval = Duration(minutes: 5);
   static const _minGap = Duration(minutes: 1);
 
@@ -254,9 +257,15 @@ class WorkService extends ChangeNotifier {
       log.warn('insp', 'Lezárás elutasítva: ${draft.inspectionType} ${draft.localId}', result.errors.join('; '));
       throw StateError(result.errors.join('\n'));
     }
+    // Hol volt a telefon a lezáráskor (ha van helyengedély): a szerver ebből pótolja a pont nélküli megállót.
+    final fix = await positionProvider?.call();
+    if (fix != null) {
+      await local.setInspectionCompletionPosition(draft.localId, latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy);
+    }
     final status = await local.completeInspectionAndTransition(draft.localId);
     log.info('insp', 'Jegyzőkönyv lezárva a telefonon: ${draft.inspectionType} ${draft.localId}, út ${draft.legKey} → $status');
     unawaited(sync.run());
+    notifyListeners();
     return status;
   }
 
@@ -266,11 +275,13 @@ class WorkService extends ChangeNotifier {
     await local.transitionLegAfterInspection(leg.legKey, 'PICKUP');
     log.info('work', 'Fuvar indítása (utólag): ${leg.legKey}');
     unawaited(sync.run());
+    notifyListeners();
   }
 
   Future<void> completeLeg(DriverLeg leg) async {
     await local.transitionLegAfterInspection(leg.legKey, 'DROPOFF');
     log.info('work', 'Fuvar lezárása (utólag): ${leg.legKey}');
     unawaited(sync.run());
+    notifyListeners();
   }
 }

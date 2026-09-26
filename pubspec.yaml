@@ -25,6 +25,11 @@ dependencies:
   crypto: 3.0.7
   flutter_secure_storage: ^10.3.4
   package_info_plus: 10.2.1
+  # Push-értesítés (FCM), értesítések nullázása és a jelvény, helyzetmegosztás fuvar közben.
+  firebase_messaging: ^16.0.0
+  flutter_local_notifications: ^19.4.0
+  app_badge_plus: ^1.2.0
+  geolocator: ^14.0.0
 
 dev_dependencies:
   flutter_test:

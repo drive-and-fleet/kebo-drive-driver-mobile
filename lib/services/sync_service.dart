@@ -313,7 +313,8 @@ class SyncService extends ChangeNotifier {
       log.info('sync', 'Aláírás feltöltve → $signatureId');
     }
 
-    await api.completeInspection(serverId);
+    // Hol volt a telefon a lezáráskor: a pont nélküli megálló innen kap térképi pontot.
+    await api.completeInspection(serverId, position: await local.inspectionCompletionPosition(localId));
     log.info('sync', 'Jegyzőkönyv lezárva a szerveren: $serverId');
   }
 

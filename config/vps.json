@@ -1,4 +1,6 @@
 {
   "DRIVER_API_BASE_URL": "https://app.flottafuvar.hu/driver-api",
-  "SOCIAL_LOGIN_ENABLED": "false"
+  "SOCIAL_LOGIN_ENABLED": "false",
+  "PUSH_ENABLED": "false",
+  "PUSH_IOS_ENABLED": "false"
 }

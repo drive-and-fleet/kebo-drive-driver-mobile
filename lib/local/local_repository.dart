@@ -171,7 +171,77 @@ class LocalRepository {
       await txn.update('local_inspection', {'leg_key': real}, where: 'leg_key = ?', whereArgs: [temporary]);
       await txn.update('sync_operation', {'leg_key': real}, where: 'leg_key = ?', whereArgs: [temporary]);
       await txn.update('sync_operation', {'entity_id': real}, where: 'entity_id = ?', whereArgs: [temporary]);
+      await txn.update('location_point', {'leg_key': real}, where: 'leg_key = ?', whereArgs: [temporary]);
     });
+  }
+
+  // ── helyzetmegosztás: a mért pontok sora (local-first), a jegyzőkönyv lezárásakori pont ──
+
+  Future<void> addLocationPoint(String legKey, {required double latitude, required double longitude, double? accuracy, double? speed, double? heading, required DateTime recordedAt}) async {
+    final db = await _db;
+    await db.insert('location_point', {
+      'leg_key': legKey, 'latitude': latitude, 'longitude': longitude, 'accuracy': accuracy,
+      'speed': speed, 'heading': heading, 'recorded_at': recordedAt.toUtc().toIso8601String(),
+    });
+  }
+
+  /// A legrégebbi még fel nem küldött pontok ([limit] darab), a szerver formátumában; `id` a törléshez.
+  Future<List<Map<String, dynamic>>> pendingLocationPoints(String legKey, {int limit = 200}) async {
+    final db = await _db;
+    final rows = await db.query('location_point', where: 'leg_key = ?', whereArgs: [legKey], orderBy: 'id', limit: limit);
+    return [
+      for (final r in rows)
+        {
+          'id': r['id'],
+          'latitude': r['latitude'],
+          'longitude': r['longitude'],
+          if (r['accuracy'] != null) 'accuracyM': r['accuracy'],
+          if (r['speed'] != null && (r['speed'] as num) >= 0) 'speedMps': r['speed'],
+          if (r['heading'] != null && (r['heading'] as num) >= 0) 'heading': r['heading'],
+          'recordedAt': r['recorded_at'],
+        }
+    ];
+  }
+
+  Future<void> deleteLocationPoints(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final db = await _db;
+    await db.delete('location_point', where: 'id IN (${List.filled(ids.length, '?').join(',')})', whereArgs: ids);
+  }
+
+  /// Amit a szerver már nem fogad (az út véget ért, lekerült, vagy a megosztás kikapcsolt), eldobjuk.
+  Future<void> dropLocationPoints(String legKey) async {
+    final db = await _db;
+    await db.delete('location_point', where: 'leg_key = ?', whereArgs: [legKey]);
+  }
+
+  Future<List<String>> legsWithPendingLocations() async {
+    final db = await _db;
+    return [for (final r in await db.rawQuery('SELECT DISTINCT leg_key FROM location_point')) '${r['leg_key']}'];
+  }
+
+  Future<void> setLegLocationSharing(String legKey, bool on) async {
+    final db = await _db;
+    await db.update('cached_leg', {'location_sharing': on ? 1 : 0}, where: 'leg_key = ?', whereArgs: [legKey]);
+  }
+
+  /// Hol volt a telefon, amikor a jegyzőkönyvet lezárta: a szerver ebből pótolja a térképi pont nélküli megállót.
+  Future<void> setInspectionCompletionPosition(String localId, {required double latitude, required double longitude, double? accuracy}) async {
+    final db = await _db;
+    await db.update('local_inspection', {'completed_latitude': latitude, 'completed_longitude': longitude, 'completed_accuracy': accuracy},
+        where: 'local_id = ?', whereArgs: [localId]);
+  }
+
+  Future<Map<String, double>?> inspectionCompletionPosition(String localId) async {
+    final db = await _db;
+    final rows = await db.query('local_inspection', columns: ['completed_latitude', 'completed_longitude', 'completed_accuracy'],
+        where: 'local_id = ?', whereArgs: [localId], limit: 1);
+    if (rows.isEmpty || rows.first['completed_latitude'] == null || rows.first['completed_longitude'] == null) return null;
+    return {
+      'latitude': (rows.first['completed_latitude'] as num).toDouble(),
+      'longitude': (rows.first['completed_longitude'] as num).toDouble(),
+      if (rows.first['completed_accuracy'] != null) 'accuracyM': (rows.first['completed_accuracy'] as num).toDouble(),
+    };
   }
 
   // ── új fuvarhoz: a sofőr szolgálatai és azok flottakezelő partnerei (offline is) ──

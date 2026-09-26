@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Push-értesítés (Android 13+ engedélyt kér). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Helyzetmegosztás fuvar közben: előtérszolgáltatás állandó értesítéssel, háttér-helyengedély nélkül. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <application
         android:label="Drive and Fleet Sofőr"
         android:name="${applicationName}"
@@ -30,6 +38,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- A push alapértelmezett csatornája (a PushService hozza létre). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="fuvarok" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

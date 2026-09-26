@@ -66,5 +66,18 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>A jegyzőkönyvhöz az autóról és a sérülésekről fotót készítesz.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>A jegyzőkönyvhöz a telefonon lévő fotót is csatolhatod.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Fuvar közben – az átvételtől a leadásig – a sofőrszolgálat és a címzett látja, hol jár az autó és mikor érkezik. Leadás után a megosztás leáll.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Fuvar közben – az átvételtől a leadásig – a sofőrszolgálat és a címzett látja, hol jár az autó és mikor érkezik, akkor is, ha az app a háttérben van. Leadás után a megosztás leáll.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

@@ -30,9 +30,9 @@ Future<void> main() async {
     } catch (e) {
       log.info('app', 'Indulás: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}, API ${AppConfig.driverApiBaseUrl}');
     }
-    // A social bejelentkezés (Google/Facebook/Apple) ki van kapcsolva alapból;
+    // A social bejelentkezés és a push-értesítés alapból ki van kapcsolva;
     // enélkül az app valódi Firebase projekt nélkül is elindul.
-    if (AppConfig.socialLoginEnabled) {
+    if (AppConfig.firebaseNeeded) {
       await Firebase.initializeApp(options: AppConfig.firebaseOptions);
     }
     final services = await AppServices.create();

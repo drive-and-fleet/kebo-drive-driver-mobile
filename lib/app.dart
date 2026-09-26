@@ -32,7 +32,13 @@ class _FleetDriverAppState extends State<FleetDriverApp> with WidgetsBindingObse
       unawaited(log.flush());
       widget.services.work.onBackground();
     }
-    if (state == AppLifecycleState.resumed) widget.services.work.onForeground();
+    if (state == AppLifecycleState.resumed) {
+      widget.services.work.onForeground();
+      // Megnyitották: az értesítések és a jelvény nullázódnak; a gyűlt pontok felmennek.
+      unawaited(widget.services.push.clear());
+      unawaited(widget.services.location.evaluate());
+      unawaited(widget.services.location.upload());
+    }
   }
 
   @override

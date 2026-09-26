@@ -105,6 +105,18 @@ native-config/README.md
 
 és kapcsold be `config/dev.json`-ban: `"SOCIAL_LOGIN_ENABLED": "true"`, majd töltsd ki a Firebase/Google mezőket. A Google/Facebook/Apple providerhez a saját Firebase, Meta és Apple alkalmazásod azonosítói szükségesek; ezeket nem lehet helyesen kitalálni vagy a forráskódba előre beégetni.
 
+## 2/b. Push-értesítés és helyzetmegosztás
+
+Az app azonosítója `hu.flottafuvar.sofor`. A push (Android) bekapcsolása: a Firebase-adatok
+és `PUSH_ENABLED=true` a `config/vps.json`-ba – lépésről lépésre:
+`../kebo-drive-documentation/deploy/FIREBASE-PUSH.md`. iOS-en a push Apple fejlesztői fiókig
+kikapcsolva marad (`PUSH_IOS_ENABLED=false`).
+
+A helyzetmegosztás (geolocator) csak folyamatban lévő úton fut, ha az iroda bekapcsolta:
+alapmódban ~100 m pontosság, 250 m szűrő, 3 percenként kötegelt feltöltés; élő mód
+(nagy pontosság, 20 s) csak amíg valaki nézi az utat. Androidon előtérszolgáltatás állandó
+értesítéssel, háttér-helyengedély nélkül.
+
 ## 3. Local konfiguráció
 
 ```bash

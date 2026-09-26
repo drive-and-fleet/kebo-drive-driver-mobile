@@ -1,4 +1,4 @@
-package com.example.fleet_driver_app
+package hu.flottafuvar.sofor
 
 import io.flutter.embedding.android.FlutterActivity
 

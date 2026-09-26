@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../services/app_services.dart';
+import 'leg_detail_screen.dart';
 import 'my_work_screen.dart';
 import 'new_order_screen.dart';
 import 'search_screen.dart';
@@ -21,6 +24,47 @@ class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
   final _myWorkKey = GlobalKey<MyWorkScreenState>();
   final _searchKey = GlobalKey<SearchScreenState>();
+
+  @override
+  void initState() {
+    super.initState();
+    final push = widget.services.push;
+    push.openLeg.addListener(_openFromPush);
+    push.foregroundMessage.addListener(_showForeground);
+    // Bejelentkezés után: értesítési engedély és a telefon regisztrálása (ha a push be van állítva).
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await push.start(context);
+      await widget.services.location.evaluate();
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.services.push.openLeg.removeListener(_openFromPush);
+    widget.services.push.foregroundMessage.removeListener(_showForeground);
+    super.dispose();
+  }
+
+  /// Értesítésre koppintott: a Munkáim frissül, és megnyílik az út (ha a telefonon van).
+  Future<void> _openFromPush() async {
+    final legKey = widget.services.push.openLeg.value;
+    if (legKey == null || !mounted) return;
+    widget.services.push.openLeg.value = null;
+    setState(() => _index = 0);
+    await _myWorkKey.currentState?.refresh();
+    final known = (await widget.services.local.cachedLegs()).any((l) => l.legKey == legKey);
+    if (!known || !mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: widget.services, legKey: legKey)));
+  }
+
+  void _showForeground() {
+    final text = widget.services.push.foregroundMessage.value;
+    if (text == null || !mounted) return;
+    widget.services.push.foregroundMessage.value = null;
+    unawaited(_myWorkKey.currentState?.refresh());
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
 
   Future<void> _refreshCurrentTab() async {
     switch (_index) {
@@ -57,6 +101,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: const Icon(Icons.cloud_upload_outlined),
                     ),
             ),
+          ),
+          AnimatedBuilder(
+            animation: widget.services.location,
+            builder: (_, __) => widget.services.location.sharingLegKey == null
+                ? const SizedBox.shrink()
+                : const Tooltip(
+                    message: 'Helyzet megosztva (fuvar közben)',
+                    child: Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Icon(Icons.my_location)),
+                  ),
           ),
           IconButton(
             tooltip: 'Hibajelentés',

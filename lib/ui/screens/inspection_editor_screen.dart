@@ -299,6 +299,11 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('$what Helyben mentve, a feltöltés a háttérben fut.'),
       ));
+      // Elindult a fuvar: ha az iroda kéri, most kérjük a helyengedélyt (előtte elmagyarázzuk).
+      if (legStatus == 'IN_PROGRESS' && draft.inspectionType == 'PICKUP') {
+        await widget.services.location.askIfNeeded(context, widget.leg);
+        if (!mounted) return;
+      }
       // Sikeres lezárás után a képernyő zárva marad, amíg el nem tűnik.
       Navigator.pop(context);
     } catch (e) {

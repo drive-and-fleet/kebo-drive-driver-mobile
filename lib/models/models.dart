@@ -79,6 +79,7 @@ class DriverLeg {
     this.toStopNotes,
     this.vehicleNotes,
     this.vehicleExtraEmail,
+    this.locationSharing = false,
   });
 
   final String? legId;
@@ -130,6 +131,10 @@ class DriverLeg {
   /// Az autó megjegyzése a fuvarban (pl. engedélyszám) és a további cím, amelyre a jegyzőkönyvek is mennek.
   final String? vehicleNotes;
   final String? vehicleExtraEmail;
+
+  /// Az iroda engedélyezte a helyzetmegosztást ennek a szolgálatnak az útjain:
+  /// fuvar közben (átvételtől leadásig) a telefon akkukímélően küldi a helyzetét.
+  final bool locationSharing;
 
   /// A cím a cégnévvel együtt, ahogy a sofőrnek mutatjuk.
   String get fromPlace => _place(fromCompanyName, fromAddress);
@@ -185,6 +190,7 @@ class DriverLeg {
         toStopNotes: json['toStopNotes']?.toString(),
         vehicleNotes: json['vehicleNotes']?.toString(),
         vehicleExtraEmail: json['vehicleExtraEmail']?.toString(),
+        locationSharing: _flag(json['locationSharing']) ?? false,
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -222,6 +228,7 @@ class DriverLeg {
         'to_stop_notes': toStopNotes,
         'vehicle_notes': vehicleNotes,
         'vehicle_extra_email': vehicleExtraEmail,
+        'location_sharing': locationSharing ? 1 : 0,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -260,6 +267,7 @@ class DriverLeg {
         toStopNotes: json['to_stop_notes']?.toString(),
         vehicleNotes: json['vehicle_notes']?.toString(),
         vehicleExtraEmail: json['vehicle_extra_email']?.toString(),
+        locationSharing: _flag(json['location_sharing']) ?? false,
       );
 
   DriverLeg copyWithStatus(String newStatus) => DriverLeg(
@@ -299,6 +307,7 @@ class DriverLeg {
         toStopNotes: toStopNotes,
         vehicleNotes: vehicleNotes,
         vehicleExtraEmail: vehicleExtraEmail,
+        locationSharing: locationSharing,
       );
 }
 

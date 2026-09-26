@@ -75,6 +75,9 @@ class _SyncScreenState extends State<SyncScreen> {
                     );
                     return;
                   }
+                  // A telefon többé nem kap értesítést és nem küld helyzetet ennek a sofőrnek.
+                  await widget.services.push.signOut();
+                  await widget.services.location.signOut();
                   await widget.services.local.clearDriverData();
                   await widget.services.auth.signOut();
                 },

@@ -219,6 +219,17 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                   const SizedBox(height: 12),
                 ],
                 _InfoCard(leg: leg),
+                if (leg.status == 'IN_PROGRESS' && leg.locationSharing) ...[
+                  const SizedBox(height: 12),
+                  AnimatedBuilder(
+                    animation: widget.services.location,
+                    builder: (context, _) => _SharingNotice(
+                      sharing: widget.services.location.sharingLegKey == leg.legKey,
+                      live: widget.services.location.isLive,
+                      onEnable: () => widget.services.location.askIfNeeded(context, leg),
+                    ),
+                  ),
+                ],
                 if ((leg.isOutbound || leg.isReturn) && !const {'COMPLETED', 'CANCELLED', 'REVOKED'}.contains(leg.status)) ...[
                   const SizedBox(height: 12),
                   _RoundTripNotice(leg: leg, returnLeg: _returnLeg, time: _time),
@@ -354,6 +365,49 @@ class _RoundTripNotice extends StatelessWidget {
           const SizedBox(height: 4),
           Text(text, style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink900)),
         ])),
+      ]),
+    );
+  }
+}
+
+/// Fuvar közben: megy-e a helyzetmegosztás ezen a telefonon (az iroda kérte).
+class _SharingNotice extends StatelessWidget {
+  const _SharingNotice({required this.sharing, required this.live, required this.onEnable});
+  final bool sharing;
+  final bool live;
+  final VoidCallback onEnable;
+
+  @override
+  Widget build(BuildContext context) {
+    if (sharing) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        color: AppColors.tintGreen,
+        child: Row(children: [
+          const Icon(Icons.my_location, color: AppColors.signalGreen),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              live
+                  ? 'Helyzet megosztva – most élőben követik az utadat.'
+                  : 'Helyzet megosztva az irodával és a címzettel, akkukímélő módban. Leadáskor leáll.',
+              style: const TextStyle(color: AppColors.signalGreen, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ]),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.all(12),
+      color: AppColors.tintAmber,
+      child: Row(children: [
+        const Icon(Icons.location_disabled, color: AppColors.signalAmber),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text('Az iroda kéri a helyzeted megosztását erre az útra, de a telefonon nincs engedélyezve.',
+              style: TextStyle(color: AppColors.ink900, fontWeight: FontWeight.w600)),
+        ),
+        TextButton(onPressed: onEnable, child: const Text('Engedélyezés')),
       ]),
     );
   }

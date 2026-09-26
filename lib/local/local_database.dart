@@ -12,7 +12,7 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
       onUpgrade: _upgrade,
@@ -57,6 +57,7 @@ class LocalDatabase {
         to_stop_notes TEXT,
         vehicle_notes TEXT,
         vehicle_extra_email TEXT,
+        location_sharing INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -169,10 +170,14 @@ class LocalDatabase {
         copy_from_local_id TEXT,
         status TEXT NOT NULL,
         general_note TEXT,
+        completed_latitude REAL,
+        completed_longitude REAL,
+        completed_accuracy REAL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
     ''');
+    await _createLocationPoint(db);
     await db.execute('''
       CREATE TABLE local_inspection_value (
         inspection_local_id TEXT NOT NULL,
@@ -311,10 +316,34 @@ class LocalDatabase {
       ''');
       await db.execute('CREATE TABLE cached_service (id TEXT PRIMARY KEY, name TEXT NOT NULL)');
     }
+    if (oldVersion < 7) {
+      await db.execute('ALTER TABLE cached_leg ADD COLUMN location_sharing INTEGER NOT NULL DEFAULT 0');
+      for (final column in ['completed_latitude', 'completed_longitude', 'completed_accuracy']) {
+        await db.execute('ALTER TABLE local_inspection ADD COLUMN $column REAL');
+      }
+      await _createLocationPoint(db);
+    }
   }
 
   Future<void> close() async {
     await _db?.close();
     _db = null;
+  }
+
+  /// Fuvar közben mért helyzetek, amíg fel nem mentek (local-first: a térerő nélkül mért pont sem vész el).
+  Future<void> _createLocationPoint(Database db) async {
+    await db.execute('''
+      CREATE TABLE location_point (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        leg_key TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        accuracy REAL,
+        speed REAL,
+        heading REAL,
+        recorded_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('CREATE INDEX ix_location_point_leg ON location_point (leg_key, id)');
   }
 }

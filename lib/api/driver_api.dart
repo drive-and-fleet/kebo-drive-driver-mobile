@@ -172,7 +172,27 @@ class DriverApi {
     return '${raw['id']}';
   }
 
-  Future<void> completeInspection(String inspectionId) async {
-    await _http.post('/api/v1/driver/inspections/$inspectionId/complete', token: await _token());
+  /// [position]: hol volt a telefon a lezáráskor (latitude, longitude, accuracyM) – elhagyható.
+  Future<void> completeInspection(String inspectionId, {Map<String, double>? position}) async {
+    await _http.post('/api/v1/driver/inspections/$inspectionId/complete', token: await _token(), body: position ?? const <String, dynamic>{});
   }
+
+  // ── push-értesítés és helyzetmegosztás ──
+
+  Future<void> registerDevice(String token, {required String platform, String? appVersion}) async {
+    await _http.post('/api/v1/driver/devices', token: await _token(), body: {'token': token, 'platform': platform, if (appVersion != null) 'appVersion': appVersion});
+  }
+
+  Future<void> unregisterDevice(String token) async {
+    await _http.post('/api/v1/driver/devices/unregister', token: await _token(), body: {'token': token});
+  }
+
+  /// Megnyitották az appot: a jelvény számlálója nullázódik a szerveren is.
+  Future<void> pushSeen() async {
+    await _http.post('/api/v1/driver/devices/seen', token: await _token());
+  }
+
+  /// Egy köteg mért pont; a válasz: élő mód van-e, és mikor jöjjön a következő feltöltés.
+  Future<Map<String, dynamic>> uploadLocations(String legKey, List<Map<String, dynamic>> points) async =>
+      Map<String, dynamic>.from(await _http.post('/api/v1/driver/legs/$legKey/locations', token: await _token(), body: {'points': points}) as Map);
 }

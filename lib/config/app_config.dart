@@ -11,6 +11,13 @@ class AppConfig {
   // belépés Firebase projekt nélkül is működik. A Google/Facebook/Apple
   // belépés kódja megmarad, csak ezzel a kapcsolóval érhető el.
   static const socialLoginEnabled = bool.fromEnvironment('SOCIAL_LOGIN_ENABLED');
+  // Push-értesítés (Firebase Cloud Messaging). A Firebase-adatok (FIREBASE_*) a
+  // config/*.json-ból jönnek; iOS-en csak Apple fejlesztői fiókkal (APNs) működik.
+  static const pushEnabled = bool.fromEnvironment('PUSH_ENABLED');
+  /// iOS-en a push APNs-kulcsot (Apple fejlesztői fiókot) kíván; addig iOS-en kikapcsolva marad.
+  static const pushIosEnabled = bool.fromEnvironment('PUSH_IOS_ENABLED');
+  static bool get pushActive => pushEnabled && (!Platform.isIOS || pushIosEnabled);
+  static bool get firebaseNeeded => socialLoginEnabled || pushActive;
   static const firebaseProjectId = String.fromEnvironment('FIREBASE_PROJECT_ID');
   static const firebaseApiKey = String.fromEnvironment('FIREBASE_API_KEY');
   static const firebaseMessagingSenderId = String.fromEnvironment(
@@ -23,7 +30,7 @@ class AppConfig {
   static const googleIosClientId = String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
 
   static void validate() {
-    if (!socialLoginEnabled) return;
+    if (!firebaseNeeded) return;
     final required = <String, String>{
       'FIREBASE_PROJECT_ID': firebaseProjectId,
       'FIREBASE_API_KEY': firebaseApiKey,
