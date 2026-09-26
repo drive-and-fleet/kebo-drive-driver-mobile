@@ -1,4 +1,4 @@
 {
-  "DRIVER_API_BASE_URL": "https://drive.kebodev.hu/driver-api",
+  "DRIVER_API_BASE_URL": "https://app.flottafuvar.hu/driver-api",
   "SOCIAL_LOGIN_ENABLED": "false"
 }

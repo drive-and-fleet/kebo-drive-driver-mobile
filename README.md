@@ -167,9 +167,9 @@ flutter run -d <DEVICE_ID> --dart-define-from-file=config/dev.json
 
 ## Indítás telefonon, a VPS-en futó rendszerrel
 
-A `config/vps.json` a https://drive.kebodev.hu-n futó Driver API-ra mutat (a Caddy
+A `config/vps.json` a https://app.flottafuvar.hu-n futó Driver API-ra mutat (a Caddy
 a `/driver-api/` útvonalat adja tovább). Emulátor nem kell, a telefonon valódi
-internetkapcsolattal megy; a fotók a https://drive.kebodev.hu/fleet-private/... címre
+internetkapcsolattal megy; a fotók a https://app.flottafuvar.hu/fleet-private/... címre
 töltődnek fel.
 
 ```bash
