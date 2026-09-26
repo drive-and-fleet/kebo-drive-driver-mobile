@@ -1272,6 +1272,7 @@ class LocalRepository {
         'local_inspection_value', 'local_inspection', 'sync_operation', 'previous_value_option',
         'previous_value', 'previous_damage', 'previous_photo', 'previous_inspection',
         'cached_photo_requirement', 'cached_form_option', 'cached_form_field', 'cached_form_type', 'cached_leg',
+        'location_point',
       ]) {
         await txn.delete(table);
       }

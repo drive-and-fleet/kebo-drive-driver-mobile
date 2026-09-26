@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:signature/signature.dart';
 
+import '../../local/local_repository.dart';
 import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
