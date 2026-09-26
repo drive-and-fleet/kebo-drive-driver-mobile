@@ -129,4 +129,64 @@ void main() {
     await local.saveGeneralNote(dropoff.localId, '');
     expect((await local.inspection(dropoff.localId))!.generalNote, isNull);
   });
+
+  // ── helyzetmegosztás (ugyanebben a fájlban: a tesztfájlok párhuzamosan futnak, és egy adatbázisfájlon osztoznak) ──
+
+  test('a helyzetmegosztás jelzője a szervertől a helyi tárig és vissza', () async {
+    DriverLeg shared(String key, Object? sharing) => DriverLeg.fromJson({
+          'legKey': key, 'status': 'IN_PROGRESS', 'sequenceNo': 1, 'orderVehicleId': 'ov-$key', 'registrationNumber': 'ABC-123',
+          'orderNo': 'FO-1', 'serviceOrgId': '2', 'fromAddress': 'A', 'toAddress': 'B', 'locationSharing': sharing,
+        });
+    await local.cacheLegs([shared('LS-ON', 1), shared('LS-OFF', false), shared('LS-OLD', null)]);
+    bool sharingOf(List<DriverLeg> legs, String key) => legs.firstWhere((l) => l.legKey == key).locationSharing;
+    var legs = await local.cachedLegs();
+    expect([sharingOf(legs, 'LS-ON'), sharingOf(legs, 'LS-OFF'), sharingOf(legs, 'LS-OLD')], [true, false, false]);
+    await local.setLegLocationSharing('LS-ON', false);
+    legs = await local.cachedLegs();
+    expect(sharingOf(legs, 'LS-ON'), false);
+  });
+
+  test('a mért pontok sora: sorrend, a szerver mezőnevei, törlés, eldobás', () async {
+    final t = DateTime.utc(2026, 9, 27, 10);
+    await local.addLocationPoint('P1', latitude: 47.5, longitude: 19.0, accuracy: 30, speed: 12, heading: 90, recordedAt: t);
+    await local.addLocationPoint('P1', latitude: 47.6, longitude: 19.1, accuracy: 25, speed: -1, heading: -1, recordedAt: t.add(const Duration(minutes: 1)));
+    await local.addLocationPoint('P2', latitude: 47.7, longitude: 19.2, recordedAt: t);
+
+    final batch = await local.pendingLocationPoints('P1');
+    expect(batch.length, 2);
+    expect(batch.first['latitude'], 47.5);
+    expect(batch.first['accuracyM'], 30);
+    expect(batch.first['speedMps'], 12);
+    expect(batch.first['recordedAt'], '2026-09-27T10:00:00.000Z');
+    // A „nem ismert” sebesség/irány (-1) nem megy fel.
+    expect(batch.last.containsKey('speedMps'), false);
+    expect(batch.last.containsKey('heading'), false);
+
+    expect((await local.legsWithPendingLocations()).toSet().containsAll({'P1', 'P2'}), true);
+    await local.deleteLocationPoints([batch.first['id'] as int]);
+    expect((await local.pendingLocationPoints('P1')).length, 1);
+    await local.dropLocationPoints('P1');
+    await local.dropLocationPoints('P2');
+    expect(await local.pendingLocationPoints('P1'), isEmpty);
+  });
+
+  test('az új fuvar ideiglenes kulcsa a helyzetpontokon is lecserélődik', () async {
+    await local.addLocationPoint('local-pos', latitude: 47.1, longitude: 19.1, recordedAt: DateTime.utc(2026, 9, 27));
+    await local.remapLegKey('local-pos', 'REAL-POS', orderNo: 'ORD-1');
+    expect((await local.pendingLocationPoints('REAL-POS')).length, 1);
+    expect(await local.pendingLocationPoints('local-pos'), isEmpty);
+    await local.dropLocationPoints('REAL-POS');
+  });
+
+  test('a lezáráskori helyzet a jegyzőkönyvhöz mentődik', () async {
+    final db = await LocalDatabase.instance.database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.insert('local_inspection', {
+      'local_id': 'i-pos', 'leg_key': 'LS-ON', 'form_type_id': 'f1', 'inspection_type': 'PICKUP',
+      'status': 'DRAFT', 'created_at': now, 'updated_at': now,
+    });
+    expect(await local.inspectionCompletionPosition('i-pos'), isNull);
+    await local.setInspectionCompletionPosition('i-pos', latitude: 47.25, longitude: 18.5, accuracy: 20);
+    expect(await local.inspectionCompletionPosition('i-pos'), {'latitude': 47.25, 'longitude': 18.5, 'accuracyM': 20.0});
+  });
 }
