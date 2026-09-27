@@ -22,7 +22,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       changes: ${{ steps.v.outputs.changes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: v
@@ -47,8 +47,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -78,7 +78,7 @@ jobs:
         run: |
           flutter build apk --release --dart-define-from-file=config/vps.json --build-name="$VERSION" --build-number="${{ github.run_number }}"
           mv build/app/outputs/flutter-apk/app-release.apk "flottafuvar-sofor-$VERSION.apk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: apk
           path: flottafuvar-sofor-*.apk
@@ -93,8 +93,8 @@ jobs:
       CHANGES: ${{ needs.version.outputs.changes }}
       SIGNED: ${{ needs.build.outputs.signed }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: apk
       - run: |
@@ -111,7 +111,7 @@ jobs:
     steps:
       - name: E-mail az eredményről
         if: env.SMTP_HOST != ''
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v22
         with:
           server_address: ${{ secrets.SMTP_HOST }}
           server_port: ${{ secrets.SMTP_PORT }}
