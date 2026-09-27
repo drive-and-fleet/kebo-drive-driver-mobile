@@ -1,0 +1,134 @@
+# Mobil kiadás: fix:/feat:/major: commit a main-en → új verzió (vX.Y.Z) → Android APK a GitHub
+# gépén (analyze + teszt után), a GitHub Release-hez csatolva; e-mail az eredményről.
+# Aláírás: ANDROID_KEYSTORE_BASE64 / _PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD secretekkel,
+# ezek nélkül debug-aláírással. Leírás: kebo-drive-documentation/deploy/CI-CD.md
+name: Kiadás
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      changes: ${{ steps.v.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          version=$(bash .github/scripts/next-version.sh --explain)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+          {
+            echo 'changes<<EOF'
+            git log --format='- %s' ${last:+$last..}HEAD | grep -E '^- (fix|feat|major)(\(|:|!)' || true
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          [ -n "$version" ] && echo "Új verzió: **$version**" >> "$GITHUB_STEP_SUMMARY" || echo "Nincs új verzió." >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: version
+    if: needs.version.outputs.version != ''
+    runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - id: sign
+        name: Release-aláírás (ha van kulcs)
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            printf '%s' "$KEYSTORE" | base64 -d > android/app/upload-keystore.jks
+            {
+              echo "storeFile=upload-keystore.jks"
+              echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+              echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
+              echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}"
+            } > android/key.properties
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: APK
+        run: |
+          flutter build apk --release --dart-define-from-file=config/vps.json --build-name="$VERSION" --build-number="${{ github.run_number }}"
+          mv build/app/outputs/flutter-apk/app-release.apk "flottafuvar-sofor-$VERSION.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: flottafuvar-sofor-*.apk
+          retention-days: 7
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      CHANGES: ${{ needs.version.outputs.changes }}
+      SIGNED: ${{ needs.build.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+      - run: |
+          note=""
+          [ "$SIGNED" = "true" ] || note=$'\n\n⚠️ Debug-aláírással készült (nincs release-kulcs a secretek között): telepíthető, de a későbbi, kulccsal aláírt verzió előtt el kell távolítani.'
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes "${CHANGES:-(nincs leírás)}$note" flottafuvar-sofor-*.apk
+
+  notify:
+    needs: [version, build, release]
+    if: always() && needs.version.outputs.version != ''
+    runs-on: ubuntu-latest
+    env:
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+    steps:
+      - name: E-mail az eredményről
+        if: env.SMTP_HOST != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          secure: ${{ secrets.SMTP_PORT == '465' }}
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          from: FlottaFuvar CI <${{ secrets.SMTP_USER }}>
+          to: ${{ secrets.NOTIFY_TO }}
+          subject: "${{ (needs.release.result == 'success' && '✅') || '❌' }} ${{ github.event.repository.name }} v${{ needs.version.outputs.version }} – ${{ (needs.release.result == 'success' && 'APK kész') || 'hiba' }}"
+          body: |
+            Repó: ${{ github.repository }}
+            Verzió: v${{ needs.version.outputs.version }}
+            APK: a GitHub Release mellékleteként
+
+            Build: ${{ needs.build.result }} · Release: ${{ needs.release.result }} 
+
+            Változások:
+            ${{ needs.version.outputs.changes }}
+
+            A futás: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
