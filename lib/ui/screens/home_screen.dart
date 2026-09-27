@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/app_services.dart';
+import 'active_trip_screen.dart';
 import 'leg_detail_screen.dart';
 import 'my_work_screen.dart';
 import 'new_order_screen.dart';
@@ -21,7 +22,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  /// 0 Most · 1 Munkáim · 2 Szabad fuvarok · 3 Átadás. A „Most” van középen:
+  /// a sofőr mindig látja, melyik fuvarban van éppen.
   int _index = 0;
+  final _activeKey = GlobalKey<ActiveTripScreenState>();
   final _myWorkKey = GlobalKey<MyWorkScreenState>();
   final _searchKey = GlobalKey<SearchScreenState>();
 
@@ -52,7 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (legKey == null || !mounted) return;
     widget.services.push.openLeg.value = null;
     setState(() => _index = 0);
-    await _myWorkKey.currentState?.refresh();
+    await _activeKey.currentState?.refresh();
     final known = (await widget.services.local.cachedLegs()).any((l) => l.legKey == legKey);
     if (!known || !mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: widget.services, legKey: legKey)));
@@ -62,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final text = widget.services.push.foregroundMessage.value;
     if (text == null || !mounted) return;
     widget.services.push.foregroundMessage.value = null;
+    unawaited(_activeKey.currentState?.refresh());
     unawaited(_myWorkKey.currentState?.refresh());
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
@@ -69,8 +74,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refreshCurrentTab() async {
     switch (_index) {
       case 0:
-        await _myWorkKey.currentState?.refresh();
+        await _activeKey.currentState?.refresh();
       case 1:
+        await _myWorkKey.currentState?.refresh();
+      case 2:
         await _searchKey.currentState?.refresh();
     }
   }
@@ -78,22 +85,27 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final pages = [
+      ActiveTripScreen(key: _activeKey, services: widget.services, onBrowseFree: () => setState(() => _index = 2)),
       MyWorkScreen(key: _myWorkKey, services: widget.services),
-      SearchScreen(key: _searchKey, services: widget.services, onClaimed: () => _myWorkKey.currentState?.refresh()),
+      SearchScreen(key: _searchKey, services: widget.services, onClaimed: () {
+        _myWorkKey.currentState?.refresh();
+        _activeKey.currentState?.refresh();
+      }),
       TransfersScreen(services: widget.services),
-      SyncScreen(services: widget.services),
     ];
     return Scaffold(
       appBar: AppBar(
-        title: Text(['Munkáim', 'Szabad fuvarok', 'Átadások', 'Szinkron'][_index]),
+        title: Text(['Most', 'Munkáim', 'Szabad fuvarok', 'Átadások'][_index]),
         actions: [
-          if (_index == 0 || _index == 1)
+          if (_index <= 2)
             IconButton(onPressed: _refreshCurrentTab, icon: const Icon(Icons.refresh), tooltip: 'Frissítés'),
           AnimatedBuilder(
             animation: widget.services.sync,
             builder: (_, __) => IconButton(
               tooltip: 'Szinkron',
-              onPressed: () => setState(() => _index = 3),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => Scaffold(appBar: AppBar(title: const Text('Szinkron')), body: SyncScreen(services: widget.services)),
+              )),
               icon: widget.services.sync.pending == 0
                   ? const Icon(Icons.cloud_done_outlined)
                   : Badge(
@@ -121,13 +133,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: IndexedStack(index: _index, children: pages),
-      floatingActionButton: _index == 0
+      floatingActionButton: _index == 1
           ? FloatingActionButton.extended(
               onPressed: () async {
                 final created = await Navigator.of(context).push<bool>(MaterialPageRoute(
                   builder: (_) => NewOrderScreen(services: widget.services),
                 ));
-                if (created == true) await _myWorkKey.currentState?.refresh();
+                if (created == true) {
+                  await _myWorkKey.currentState?.refresh();
+                  await _activeKey.currentState?.refresh();
+                }
               },
               icon: const Icon(Icons.add),
               label: const Text('Új fuvar'),
@@ -136,14 +151,14 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) {
-          log.debug('ui', 'Fül: ${['Munkáim', 'Szabad fuvarok', 'Átadás', 'Szinkron'][value]}');
+          log.debug('ui', 'Fül: ${['Most', 'Munkáim', 'Szabad fuvarok', 'Átadás'][value]}');
           setState(() => _index = value);
         },
         destinations: const [
+          NavigationDestination(icon: Icon(Icons.directions_car_outlined), selectedIcon: Icon(Icons.directions_car), label: 'Most'),
           NavigationDestination(icon: Icon(Icons.route_outlined), selectedIcon: Icon(Icons.route), label: 'Munkáim'),
           NavigationDestination(icon: Icon(Icons.playlist_add_check_outlined), selectedIcon: Icon(Icons.playlist_add_check), label: 'Szabad fuvarok'),
           NavigationDestination(icon: Icon(Icons.swap_horiz), label: 'Átadás'),
-          NavigationDestination(icon: Icon(Icons.sync), label: 'Szinkron'),
         ],
       ),
     );

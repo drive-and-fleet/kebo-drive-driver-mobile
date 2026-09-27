@@ -48,6 +48,13 @@ class DriverApi {
     await _http.post('/api/v1/driver/legs/$legKey/claim', token: await _token());
   }
 
+  /// „Leadom”: a sofőr leveszi magáról a még el nem indított utat (az indok nem kötelező).
+  Future<void> release(String legKey, {String? reason}) async {
+    await _http.post('/api/v1/driver/legs/$legKey/release', token: await _token(), body: {
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+    });
+  }
+
   Future<void> start(String legKey) async {
     await _http.post('/api/v1/driver/legs/$legKey/start', token: await _token());
   }

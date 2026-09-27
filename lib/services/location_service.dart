@@ -77,6 +77,9 @@ class LocationService extends ChangeNotifier {
     }
   }
 
+  /// A felület kérdezi: megvan-e már a helyengedély (előre engedélyezhető, még indulás előtt).
+  Future<bool> permitted() => _permitted();
+
   Future<bool> _permitted() async {
     if (!await Geolocator.isLocationServiceEnabled()) return false;
     final permission = await Geolocator.checkPermission();

@@ -6,13 +6,16 @@ import '../theme.dart';
 import 'sync_badge.dart';
 
 class LegCard extends StatelessWidget {
-  const LegCard({super.key, required this.leg, required this.onTap, this.trailing, this.syncState});
+  const LegCard({super.key, required this.leg, required this.onTap, this.trailing, this.syncState, this.showStatus = true});
   final DriverLeg leg;
   final VoidCallback onTap;
   final Widget? trailing;
 
   /// Csak a telefonon lévő, még fel nem töltött adatnál jelenik meg.
   final LegSyncState? syncState;
+
+  /// A Szabad fuvarok listáján nincs állapotjelzés: ott minden felvehető.
+  final bool showStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +35,7 @@ class LegCard extends StatelessWidget {
                     style: const TextStyle(fontFamily: 'BarlowCondensed', fontSize: AppText.plate, fontWeight: FontWeight.w700, color: AppColors.ink900),
                   ),
                 ),
-                StatusPlate(leg.status, labelOverride: _statusLabel(leg.status)),
+                if (showStatus) StatusPlate(leg.status, labelOverride: _statusLabel(leg.status)),
               ]),
               if (vehicle.isNotEmpty) Padding(
                 padding: const EdgeInsets.only(top: 2),

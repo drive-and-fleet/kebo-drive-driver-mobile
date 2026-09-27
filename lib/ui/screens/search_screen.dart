@@ -4,7 +4,6 @@ import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
 import '../widgets/leg_card.dart';
-import 'leg_detail_screen.dart';
 import '../../logging/app_log.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -24,6 +23,9 @@ class SearchScreenState extends State<SearchScreen> {
   bool _loading = true;
   bool _busy = false;
   String? _message;
+
+  /// A most felvett utak: a kártyán „Felvetted” jelzés, nem nyílik meg az adatlap.
+  final Set<String> _claimed = {};
 
   @override
   void initState() {
@@ -65,12 +67,8 @@ class SearchScreenState extends State<SearchScreen> {
       await widget.services.work.claimAndDownload(leg);
       widget.onClaimed?.call();
       if (!mounted) return;
-      setState(() => _message = null);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fuvar felvéve és offline használatra letöltve.')));
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey),
-      ));
-      await _load();
+      setState(() { _message = null; _claimed.add(leg.legKey); });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Felvetted: a fuvar a Munkáid között van, offline is elérhető.')));
     } catch (e) {
       log.warn('work', 'Fuvar felvétele nem sikerült: ${leg.legKey}', e);
       if (mounted) setState(() => _message = '$e');
@@ -126,8 +124,15 @@ class SearchScreenState extends State<SearchScreen> {
             LegCard(
               leg: leg,
               onTap: () {},
+              showStatus: false,
               // Az utak sorban mennek: az előző út teljesülése előtt ez nem vehető fel.
-              trailing: leg.waitsForPreviousLeg
+              trailing: _claimed.contains(leg.legKey)
+                  ? const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.check_circle, color: AppColors.signalGreen),
+                      SizedBox(width: 6),
+                      Text('Felvetted', style: TextStyle(color: AppColors.signalGreen, fontWeight: FontWeight.w700)),
+                    ])
+                  : leg.waitsForPreviousLeg
                   ? const Flexible(
                       child: Text('Előbb az előző útnak kell teljesülnie',
                           textAlign: TextAlign.right, style: TextStyle(fontSize: 13, color: AppColors.ink600)),

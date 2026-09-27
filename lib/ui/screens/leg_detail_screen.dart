@@ -6,7 +6,7 @@ import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
 import '../widgets/sync_badge.dart';
-import 'inspection_setup_screen.dart';
+import '../leg_flow.dart';
 import 'transfer_create_screen.dart';
 import '../../logging/app_log.dart';
 
@@ -26,6 +26,13 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
   LegSyncState? _syncState;
   bool _busy = true;
   String? _error;
+
+  /// A következő jegyzőkönyv az előzőből induljon (alapból igen; kikapcsolható).
+  bool _copy = true;
+  bool _copyAvailable = false;
+  bool _pickupExists = false;
+  bool _dropoffExists = false;
+  bool _releasable = false;
 
   @override
   void initState() {
@@ -112,45 +119,33 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     final leg = await widget.services.local.cachedLeg(legKey);
     final syncState = (await widget.services.local.legSyncStates())[legKey];
     final returnLeg = leg == null ? null : await widget.services.local.returnLegFor(leg);
+    final phase = leg == null ? null : nextPhase(leg);
+    final copyAvailable = leg != null && phase != null && await canCopyInto(widget.services, leg, phase);
+    final pickup = await widget.services.local.inspectionForLeg(legKey, 'PICKUP');
+    final dropoff = await widget.services.local.inspectionForLeg(legKey, 'DROPOFF');
+    final releasable = leg != null && await canRelease(widget.services, leg);
     if (!mounted) return;
     setState(() {
       _leg = leg;
       _returnLeg = returnLeg;
       _syncState = syncState;
+      _copyAvailable = copyAvailable;
+      _pickupExists = pickup != null;
+      _dropoffExists = dropoff != null;
+      _releasable = releasable;
       if (!quiet) _busy = false;
     });
   }
 
   /// Egyetlen gomb minden állapothoz: megnyitja a szükséges jegyzőkönyvet. A
   /// fuvar indítását/lezárását maga a jegyzőkönyv lezárása végzi, egy lokális
-  /// tranzakcióban — itt a visszatérés után csak újraolvassuk az állapotot, az
-  /// üzleti lépés nem függ attól, hogyan zárult be a képernyő.
-  Future<void> _startTrip() => _openPhase('PICKUP', (leg) => widget.services.work.startLeg(leg));
-
-  Future<void> _finishTrip() => _openPhase('DROPOFF', (leg) => widget.services.work.completeLeg(leg));
-
-  Future<void> _openPhase(String phase, Future<void> Function(DriverLeg leg) transitionOnly) async {
+  /// tranzakcióban — itt a visszatérés után csak újraolvassuk az állapotot.
+  Future<void> _runPhase(String phase) async {
     final leg = _leg;
     if (leg == null || _busy) return;
-    log.info('work', '${phase == 'PICKUP' ? 'Fuvar indítása' : 'Fuvar lezárása'} gomb: ${leg.legKey} (${leg.status})');
     setState(() { _busy = true; _error = null; });
     try {
-      final existing = await widget.services.local.inspectionForLeg(leg.legKey, phase);
-      if (existing != null && existing.status != 'DRAFT') {
-        // A jegyzőkönyv már lezárt, csak az állapotváltás maradt el (korábbi
-        // appverzió): nem nyitjuk újra, csak a hiányzó lépést végezzük el.
-        await transitionOnly(leg);
-      } else if (mounted) {
-        await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => InspectionSetupScreen(services: widget.services, leg: leg, phase: phase),
-        ));
-        // Körfuvar: a leadás után a sofőr nem mehet el — megvárja az autót, és visszaviszi.
-        // Csak ha a visszaút is az övé: ha másnak osztották ki, neki nincs mire várnia.
-        if (phase == 'DROPOFF' && leg.isOutbound && await widget.services.local.returnLegFor(leg) != null) {
-          final closed = await widget.services.local.inspectionForLeg(leg.legKey, 'DROPOFF');
-          if (closed != null && closed.status != 'DRAFT' && mounted) await _showWaitDialog(leg);
-        }
-      }
+      await runPhase(context, widget.services, leg, phase, copy: _copy);
     } catch (e, stack) {
       log.error('work', 'Fuvar ${phase == 'PICKUP' ? 'indítása' : 'lezárása'} nem sikerült: ${leg.legKey}', e, stack);
       if (mounted) setState(() => _error = '$e');
@@ -159,40 +154,24 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     }
   }
 
-  static String _time(DateTime? t) {
-    if (t == null) return '';
-    final l = t.toLocal();
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${two(l.month)}.${two(l.day)}. ${two(l.hour)}:${two(l.minute)}';
+  /// A lezárt (vagy megkezdett) jegyzőkönyv bármikor megnézhető.
+  Future<void> _view(String phase) async {
+    final leg = _leg;
+    if (leg == null) return;
+    try {
+      await openInspection(context, widget.services, leg, phase);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      await _load(quiet: true);
+    }
   }
 
-  Future<void> _showWaitDialog(DriverLeg outbound) async {
-    final back = await widget.services.local.returnLegFor(outbound);
-    log.info('work', 'Körfuvar: várakozás a leadás után (${outbound.legKey}), visszaút: ${back?.legKey ?? 'nincs a sofőrnél'}');
-    if (!mounted) return;
-    final open = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(Icons.hourglass_top, color: AppColors.signalAmber, size: 36),
-        title: const Text('Körfuvar – várakozás'),
-        content: Text(back == null
-            ? 'Ne menj el! Várd meg az autót itt: ${outbound.toAddress}.\n\nA visszaút még nincs kiosztva neked – szólj az irodának.'
-            : 'Ne menj el! Várd meg, amíg az autó elkészül itt: ${outbound.toAddress}.\n\n'
-                'Utána vidd vissza ide: ${back.toAddress}'
-                '${back.plannedStart == null ? '' : '\nTervezett visszaindulás: ${_time(back.plannedStart)}'}.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Rendben')),
-          if (back != null)
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Visszaút megnyitása')),
-        ],
-      ),
-    );
-    if (open == true && back != null && mounted) {
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => LegDetailScreen(services: widget.services, legKey: back.legKey),
-      ));
-    }
+  Future<void> _release() async {
+    final leg = _leg;
+    if (leg == null || _busy) return;
+    final released = await releaseLeg(context, widget.services, leg);
+    if (released && mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -220,37 +199,70 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                   const SizedBox(height: 12),
                 ],
                 _InfoCard(leg: leg),
-                if (leg.status == 'IN_PROGRESS' && leg.locationSharing) ...[
+                if ((leg.status == 'IN_PROGRESS' || leg.status == 'ASSIGNED') && leg.locationSharing) ...[
                   const SizedBox(height: 12),
                   AnimatedBuilder(
                     animation: widget.services.location,
-                    builder: (context, _) => _SharingNotice(
-                      sharing: widget.services.location.sharingLegKey == leg.legKey,
-                      live: widget.services.location.isLive,
-                      onEnable: () => widget.services.location.askIfNeeded(context, leg),
+                    builder: (context, _) => FutureBuilder<bool>(
+                      future: widget.services.location.permitted(),
+                      builder: (context, permitted) => _SharingNotice(
+                        started: leg.status == 'IN_PROGRESS',
+                        permitted: permitted.data ?? false,
+                        sharing: widget.services.location.sharingLegKey == leg.legKey,
+                        live: widget.services.location.isLive,
+                        onEnable: () async {
+                          await widget.services.location.askIfNeeded(context, leg);
+                          if (mounted) setState(() {});
+                        },
+                      ),
                     ),
                   ),
                 ],
                 // A „várd meg az autót” jelzés csak annak szól, akinél a visszaút is van.
                 if ((leg.isReturn || (leg.isOutbound && _returnLeg != null)) && !const {'COMPLETED', 'CANCELLED', 'REVOKED'}.contains(leg.status)) ...[
                   const SizedBox(height: 12),
-                  _RoundTripNotice(leg: leg, returnLeg: _returnLeg, time: _time),
+                  _RoundTripNotice(leg: leg, returnLeg: _returnLeg, time: shortTime),
                 ],
                 const SizedBox(height: 12),
                 SyncBadge(_syncState, detailed: true),
                 const SizedBox(height: 16),
+                if (_copyAvailable)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _copy,
+                    onChanged: _busy ? null : (v) => setState(() => _copy = v),
+                    title: const Text('Másolás az előző jegyzőkönyvből'),
+                    subtitle: const Text('Az adatok és a sérülések átkerülnek, a kézi aláírás nem. Kikapcsolva üres jegyzőkönyv indul.'),
+                  ),
                 if (leg.status == 'ASSIGNED')
                   FilledButton.icon(
-                    onPressed: _busy ? null : _startTrip,
+                    onPressed: _busy ? null : () => _runPhase('PICKUP'),
                     icon: const Icon(Icons.play_arrow),
-                    label: const Text('Fuvar indítása'),
+                    label: const Text('Fuvar indítása (átvételi jegyzőkönyv)'),
                   ),
                 if (leg.status == 'IN_PROGRESS')
                   FilledButton.icon(
-                    onPressed: _busy ? null : _finishTrip,
+                    onPressed: _busy ? null : () => _runPhase('DROPOFF'),
                     icon: const Icon(Icons.done_all),
-                    label: const Text('Fuvar lezárása'),
+                    label: const Text('Fuvar lezárása (leadási jegyzőkönyv)'),
                   ),
+                if (_pickupExists || _dropoffExists) ...[
+                  const SizedBox(height: 10),
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    if (_pickupExists)
+                      OutlinedButton.icon(
+                        onPressed: () => _view('PICKUP'),
+                        icon: const Icon(Icons.description_outlined),
+                        label: const Text('Átvételi jegyzőkönyv'),
+                      ),
+                    if (_dropoffExists)
+                      OutlinedButton.icon(
+                        onPressed: () => _view('DROPOFF'),
+                        icon: const Icon(Icons.description_outlined),
+                        label: const Text('Leadási jegyzőkönyv'),
+                      ),
+                  ]),
+                ],
                 // A még fel nem küldött új fuvar a szerveren még nem létezik: nem adható át.
                 if (leg.status == 'ASSIGNED' && !LocalRepository.isLocalLeg(leg.legKey)) ...[
                   const SizedBox(height: 10),
@@ -262,6 +274,15 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                             )),
                     icon: const Icon(Icons.swap_horiz),
                     label: const Text('Átadás másik sofőrnek'),
+                  ),
+                ],
+                if (_releasable) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: AppColors.signalRed),
+                    onPressed: _busy ? null : _release,
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Leadom ezt a fuvart'),
                   ),
                 ],
                 if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status)) ...[
@@ -372,16 +393,19 @@ class _RoundTripNotice extends StatelessWidget {
   }
 }
 
-/// Fuvar közben: megy-e a helyzetmegosztás ezen a telefonon (az iroda kérte).
+/// Helyzetmegosztás (az iroda kérte): fuvar közben megy-e, indulás előtt pedig
+/// előre engedélyezhető, hogy az átvételkor már magától induljon.
 class _SharingNotice extends StatelessWidget {
-  const _SharingNotice({required this.sharing, required this.live, required this.onEnable});
+  const _SharingNotice({required this.started, required this.permitted, required this.sharing, required this.live, required this.onEnable});
+  final bool started;
+  final bool permitted;
   final bool sharing;
   final bool live;
   final VoidCallback onEnable;
 
   @override
   Widget build(BuildContext context) {
-    if (sharing) {
+    if (sharing || (!started && permitted)) {
       return Container(
         padding: const EdgeInsets.all(12),
         color: AppColors.tintGreen,
@@ -390,9 +414,11 @@ class _SharingNotice extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              live
-                  ? 'Helyzet megosztva – most élőben követik az utadat.'
-                  : 'Helyzet megosztva az irodával és a címzettel, akkukímélő módban. Leadáskor leáll.',
+              !started
+                  ? 'Helyzetmegosztás engedélyezve: az átvételkor magától elindul, leadáskor leáll.'
+                  : live
+                      ? 'Helyzet megosztva – most élőben követik az utadat.'
+                      : 'Helyzet megosztva az irodával és a címzettel, akkukímélő módban. Leadáskor leáll.',
               style: const TextStyle(color: AppColors.signalGreen, fontWeight: FontWeight.w600),
             ),
           ),
@@ -405,9 +431,12 @@ class _SharingNotice extends StatelessWidget {
       child: Row(children: [
         const Icon(Icons.location_disabled, color: AppColors.signalAmber),
         const SizedBox(width: 10),
-        const Expanded(
-          child: Text('Az iroda kéri a helyzeted megosztását erre az útra, de a telefonon nincs engedélyezve.',
-              style: TextStyle(color: AppColors.ink900, fontWeight: FontWeight.w600)),
+        Expanded(
+          child: Text(
+              started
+                  ? 'Az iroda kéri a helyzeted megosztását erre az útra, de a telefonon nincs engedélyezve.'
+                  : 'Az iroda kéri a helyzeted megosztását az út alatt. Engedélyezd már most, hogy induláskor ne kelljen vele foglalkoznod.',
+              style: const TextStyle(color: AppColors.ink900, fontWeight: FontWeight.w600)),
         ),
         TextButton(onPressed: onEnable, child: const Text('Engedélyezés')),
       ]),

@@ -224,6 +224,19 @@ class WorkService extends ChangeNotifier {
     log.info('work', 'Fuvar felvéve és letöltve: ${leg.legKey}');
   }
 
+  /// „Leadom ezt a fuvart”: csak hálózattal (a szerver dönt, hogy még leadható-e).
+  /// Utána a telefonról is lekerül, a Munkáim frissül.
+  Future<void> releaseLeg(DriverLeg leg, {String? reason}) async {
+    log.info('work', 'Fuvar leadása: ${leg.legKey} (${leg.orderNo} #${leg.sequenceNo})${reason == null || reason.trim().isEmpty ? '' : ', indokkal'}');
+    await api.release(leg.legKey, reason: reason);
+    try {
+      await _refreshFromServer(full: false, why: 'leadás');
+    } catch (e) {
+      log.warn('work', 'A leadás után a munkalista most nem frissült', e);
+    }
+    notifyListeners();
+  }
+
   /// A szolgálat jegyzőkönyv-típusa(i). Új jegyzőkönyvhöz csak az aktív ([activeOnly]);
   /// egy már megkezdett folytatásához a saját (akár azóta inaktivált) típusa is.
   Future<List<FormTypeConfig>> formsFor(DriverLeg leg, {bool activeOnly = false}) => local.forms(leg.serviceOrgId, activeOnly: activeOnly);
