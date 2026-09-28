@@ -191,6 +191,17 @@ class DriverApi {
   }
 
   /// [position]: hol volt a telefon a lezáráskor (latitude, longitude, accuracyM) – elhagyható.
+  /// A lezárt jegyzőkönyv javítása: a szerver menti az előzményt, és újra kiküldi a levelet.
+  Future<Map<String, dynamic>> correctInspection(String inspectionId, List<Map<String, dynamic>> values,
+      {String? generalNote, String? reason, required String deviceOperationId}) async {
+    return Map<String, dynamic>.from(await _http.post('/api/v1/driver/inspections/$inspectionId/corrections', token: await _token(), body: {
+      'values': values,
+      'generalNote': generalNote,
+      if (reason != null) 'reason': reason,
+      'deviceOperationId': deviceOperationId,
+    }) as Map);
+  }
+
   Future<void> completeInspection(String inspectionId, {Map<String, double>? position}) async {
     await _http.post('/api/v1/driver/inspections/$inspectionId/complete', token: await _token(), body: position ?? const <String, dynamic>{});
   }

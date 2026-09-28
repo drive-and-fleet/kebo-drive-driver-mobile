@@ -921,6 +921,41 @@ class LocalRepository {
     final db = await _db;
     await db.transaction((txn) async {
       await _assertDraft(txn, localId);
+      await _writeValue(txn, localId, fieldId, value, optionIds);
+    });
+  }
+
+  /// A lezárt jegyzőkönyv javítása (az utat vivő sofőr, az út lezárásáig): a telefonon
+  /// azonnal érvényes, és egy „javítás” művelet áll sorba. A szinkron a feltöltéskor a
+  /// telefonon lévő értékeket küldi, az út korábbi műveletei (maga a jegyzőkönyv) után.
+  /// Minden javítás külön művelet: a szerveren mindegyik külön bejegyzés az előzményben.
+  Future<void> correctInspection(String localId, Map<String, ({Map<String, dynamic> value, List<String> optionIds})> changes,
+      {String? generalNote, String? reason}) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final rows = await txn.query('local_inspection', columns: ['status', 'leg_key'], where: 'local_id = ?', whereArgs: [localId], limit: 1);
+      if (rows.isEmpty) throw StateError('Hiányzó lokális jegyzőkönyv: $localId');
+      if (rows.first['status'] == 'DRAFT') throw StateError('A nyitott jegyzőkönyvet nem javítani kell, hanem tovább szerkeszteni.');
+      for (final entry in changes.entries) {
+        await _writeValue(txn, localId, entry.key, entry.value.value, entry.value.optionIds);
+      }
+      final now = DateTime.now().toUtc().toIso8601String();
+      await txn.update('local_inspection', {
+        if (generalNote != null) 'general_note': generalNote.trim().isEmpty ? null : generalNote.trim(),
+        'updated_at': now,
+      }, where: 'local_id = ?', whereArgs: [localId]);
+      final operationId = _uuid.v4();
+      await txn.insert('sync_operation', {
+        'id': operationId, 'operation_type': 'CORRECT_INSPECTION', 'entity_id': localId, 'leg_key': '${rows.first['leg_key']}', 'state': 'PENDING',
+        'attempts': 0, 'last_error': null,
+        'payload': jsonEncode({'deviceOperationId': operationId, if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim()}),
+        'created_at': now, 'updated_at': now,
+      });
+    });
+  }
+
+  Future<void> _writeValue(DatabaseExecutor txn, String localId, String fieldId, Map<String, dynamic> value, List<String> optionIds) async {
+    {
       await txn.delete('local_inspection_value_option', where: 'inspection_local_id = ? AND field_definition_id = ?', whereArgs: [localId, fieldId]);
       if (isEmptyValue(value, optionIds)) {
         await txn.delete('local_inspection_value', where: 'inspection_local_id = ? AND field_definition_id = ?', whereArgs: [localId, fieldId]);
@@ -943,7 +978,15 @@ class LocalRepository {
         }
       }
       await txn.update('local_inspection', {'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
-    });
+    }
+  }
+
+  /// Vár-e még feltöltésre javítás ennél a jegyzőkönyvnél (a szerkesztő ezt jelzi).
+  Future<int> pendingCorrections(String localId) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+        "SELECT COUNT(*) AS n FROM sync_operation WHERE operation_type = 'CORRECT_INSPECTION' AND entity_id = ? AND state <> 'DONE'", [localId]);
+    return Sqflite.firstIntValue(rows) ?? 0;
   }
 
   Future<List<LocalDamage>> damages(String localId) async {

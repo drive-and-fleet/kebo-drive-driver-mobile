@@ -41,9 +41,20 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   bool _loading = true;
   bool _finalizing = false;
 
-  /// Lezárt jegyzőkönyv csak megtekinthető: a tartalma már a sync sorban van,
-  /// utólagos változás sosem jutna fel a szerverre.
-  bool get _readOnly => _draft?.status != 'DRAFT' || _finalizing;
+  /// Lezárt jegyzőkönyv csak megtekinthető — kivéve a javítást: az utat vivő sofőr
+  /// az út lezárásáig javíthatja az adatokat és a megjegyzést (előzményként megmarad).
+  bool get _readOnly => (_draft?.status != 'DRAFT' && !_correcting) || _finalizing;
+
+  /// Fotó, sérülés és szignó csak a nyitott jegyzőkönyvben változhat (javításkor nem).
+  bool get _mediaLocked => _draft?.status != 'DRAFT' || _finalizing;
+
+  /// Javítható-e most: lezárt, és az út még folyamatban van ezen a telefonon.
+  bool _correctable = false;
+  bool _correcting = false;
+  bool _savingCorrection = false;
+  int _pendingCorrections = 0;
+  /// A javítás közben átírt mezők (mentésig csak itt).
+  final Map<String, ({Map<String, dynamic> value, List<String> optionIds})> _edits = {};
 
   /// „Általános megjegyzés”: gépelés közben, fél másodperc szünet után mentődik a telefonra.
   final _note = TextEditingController();
@@ -70,6 +81,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   }
 
   void _noteChanged(String _) {
+    if (_correcting) return; // javításkor a megjegyzés a mentéssel együtt megy
     _noteTimer?.cancel();
     _noteTimer = Timer(const Duration(milliseconds: 500), _saveNote);
   }
@@ -103,7 +115,11 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     final damages = await widget.services.local.damages(widget.draftId);
     final photos = await widget.services.local.photos(widget.draftId);
     final signatures = await widget.services.local.signatures(widget.draftId);
+    final leg = await widget.services.local.cachedLeg(LocalRepository.currentLegKey(widget.leg.legKey));
+    final pending = await widget.services.local.pendingCorrections(widget.draftId);
     if (mounted) setState(() {
+      _correctable = draft != null && draft.status != 'DRAFT' && leg?.status == 'IN_PROGRESS';
+      _pendingCorrections = pending;
       _draft = draft;
       _values = values;
       _damages = damages;
@@ -130,9 +146,13 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     await _reload();
   }
 
-  Future<void> _saveValue(FormFieldConfig field, Map<String, dynamic> value, List<String> options) {
+  Future<void> _saveValue(FormFieldConfig field, Map<String, dynamic> value, List<String> options) async {
+    if (_correcting) {
+      setState(() => _edits[field.fieldDefinitionId] = (value: value, optionIds: options));
+      return;
+    }
     log.debug('insp', 'Mező mentve: ${field.fieldDefinitionId} (${widget.draftId})');
-    return _guard(() => widget.services.local.saveInspectionValue(widget.draftId, field.fieldDefinitionId, value, options));
+    await _guard(() => widget.services.local.saveInspectionValue(widget.draftId, field.fieldDefinitionId, value, options));
   }
 
   Future<void> _takeGeneralPhoto(String type) async {
@@ -279,6 +299,69 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     name.dispose(); controller.dispose();
   }
 
+  /// A mező megjelenített értéke: javítás közben az átírt, egyébként a mentett.
+  Map<String, dynamic>? _shown(String fieldId) {
+    final edit = _edits[fieldId];
+    if (edit == null) return _values[fieldId];
+    return {...edit.value, 'option_ids': edit.optionIds};
+  }
+
+  void _startCorrection() {
+    log.info('insp', 'Javítás indítva: ${widget.draftId}');
+    setState(() { _correcting = true; _edits.clear(); });
+  }
+
+  void _cancelCorrection() {
+    setState(() {
+      _correcting = false;
+      _edits.clear();
+      _note.text = _draft?.generalNote ?? '';
+    });
+  }
+
+  Future<void> _saveCorrection() async {
+    final draft = _draft;
+    if (draft == null) return;
+    final noteChanged = (_note.text.trim()) != (draft.generalNote ?? '').trim();
+    if (_edits.isEmpty && !noteChanged) {
+      _cancelCorrection();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nem volt változás.')));
+      return;
+    }
+    final reason = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Javítás mentése'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('A jegyzőkönyv a javított adatokkal újra kimegy a címzetteknek, „Javítás történt a jegyzőkönyvben” jelzéssel. Az előző értékek előzményként megmaradnak.'),
+          const SizedBox(height: 12),
+          TextField(controller: reason, maxLines: 2, maxLength: 500, decoration: const InputDecoration(labelText: 'Mi volt a hiba? (nem kötelező)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Javítás mentése')),
+        ],
+      ),
+    );
+    final why = reason.text;
+    reason.dispose();
+    if (ok != true || !mounted) return;
+    setState(() => _savingCorrection = true);
+    try {
+      await widget.services.work.correctInspection(draft, Map.of(_edits), generalNote: noteChanged ? _note.text : null, reason: why);
+      if (!mounted) return;
+      setState(() { _correcting = false; _edits.clear(); });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Javítás mentve a telefonon; a feltöltés a háttérben fut.')));
+    } catch (e, stack) {
+      log.error('insp', 'A javítás mentése nem sikerült (${widget.draftId})', e, stack);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('A javítást nem sikerült menteni: $e')));
+    } finally {
+      if (mounted) setState(() => _savingCorrection = false);
+      await _reload();
+    }
+  }
+
   Future<void> _finalize() async {
     final draft = _draft;
     if (draft == null) return;
@@ -329,15 +412,35 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 Card(child: ListTile(leading: const Icon(Icons.directions_car), title: Text(widget.leg.registrationNumber), subtitle: Text('${widget.leg.make ?? ''} ${widget.leg.model ?? ''}\n${widget.form.name}'))),
-                if (_draft != null && _draft!.status != 'DRAFT')
-                  const Card(child: ListTile(leading: Icon(Icons.lock_outline), title: Text('Lezárt jegyzőkönyv'), subtitle: Text('Csak megtekinthető. A feltöltés állapotát a fuvar adatlapja mutatja.'))),
+                if (_draft != null && _draft!.status != 'DRAFT' && !_correcting)
+                  Card(child: ListTile(
+                    leading: const Icon(Icons.lock_outline),
+                    title: const Text('Lezárt jegyzőkönyv'),
+                    subtitle: Text([
+                      _correctable ? 'Az út lezárásáig javíthatod: az adatokat és a megjegyzést.' : 'Csak megtekinthető; az út lezárása után nem javítható.',
+                      if (_pendingCorrections > 0) 'Javítás feltöltésre vár ($_pendingCorrections).',
+                    ].join('\n')),
+                    trailing: _correctable ? OutlinedButton(onPressed: _startCorrection, child: const Text('Javítás')) : null,
+                  )),
+                if (_correcting)
+                  const Card(
+                    color: Color(0xFFF6E3C2),
+                    child: ListTile(
+                      leading: Icon(Icons.edit_note, color: Color(0xFF8A5300)),
+                      title: Text('Javítás'),
+                      subtitle: Text('Írd át a hibás adatokat, majd mentsd. Fotó, sérülés és szignó itt nem változik.'),
+                    ),
+                  ),
                 if (_draft?.copyFromServerId != null || _draft?.copyFromLocalId != null)
                   const Card(child: ListTile(leading: Icon(Icons.copy_all), title: Text('Korábbi jegyzőkönyvből előtöltve'), subtitle: Text('Ellenőrizd az adatokat. Az aláírás nem lett átmásolva.'))),
                 const SizedBox(height: 12),
                 Text('Adatok', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
                 for (final field in fields)
-                  DynamicField(field: field, value: _values[field.fieldDefinitionId], enabled: !_readOnly, onChanged: (value, options) => _saveValue(field, value, options)),
+                  DynamicField(
+                    // Új kulcs a javítás elején / végén: a mező újra az aktuális értékből épül fel.
+                    key: ValueKey('${field.fieldDefinitionId}-$_correcting'),
+                    field: field, value: _shown(field.fieldDefinitionId), enabled: !_readOnly, onChanged: (value, options) => _saveValue(field, value, options)),
                 const SizedBox(height: 16),
                 Text('Fotók', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 6),
@@ -346,14 +449,14 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     leading: const Icon(Icons.photo_camera_outlined),
                     title: Text('${requirement.photoType}${requirement.required ? ' *' : ''}'),
                     subtitle: Text('Minimum: ${requirement.minCount} • Rögzítve: ${_photos.where((p) => p.damageLocalId == null && p.photoType == requirement.photoType).length}'),
-                    trailing: IconButton(onPressed: _readOnly ? null : () => _takeGeneralPhoto(requirement.photoType), icon: const Icon(Icons.add_a_photo)),
+                    trailing: IconButton(onPressed: _mediaLocked ? null : () => _takeGeneralPhoto(requirement.photoType), icon: const Icon(Icons.add_a_photo)),
                   )),
                 if (_photos.where((p) => p.damageLocalId == null).isNotEmpty)
                   _PhotoStrip(photos: _photos.where((p) => p.damageLocalId == null).toList()),
                 const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Sérülések', style: Theme.of(context).textTheme.titleLarge),
-                  FilledButton.tonalIcon(onPressed: _readOnly ? null : _addDamage, icon: const Icon(Icons.add), label: const Text('Sérülés')),
+                  FilledButton.tonalIcon(onPressed: _mediaLocked ? null : _addDamage, icon: const Icon(Icons.add), label: const Text('Sérülés')),
                 ]),
                 const SizedBox(height: 6),
                 if (_damages.isEmpty) const Text('Nincs rögzített sérülés.'),
@@ -371,7 +474,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                         // A másolt sérülést és fotóit a szerver másolja; a mobil nem
                         // ismeri a másolat azonosítóját, így új fotó nem köthető hozzá.
                         if (!damage.baseline)
-                          Align(alignment: Alignment.centerRight, child: FilledButton.tonalIcon(onPressed: _readOnly ? null : () => _takeDamagePhoto(damage), icon: const Icon(Icons.add_a_photo), label: const Text('Sérülés fotó'))),
+                          Align(alignment: Alignment.centerRight, child: FilledButton.tonalIcon(onPressed: _mediaLocked ? null : () => _takeDamagePhoto(damage), icon: const Icon(Icons.add_a_photo), label: const Text('Sérülés fotó'))),
                       ]),
                     ),
                   ),
@@ -390,7 +493,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Kézi szignó', style: Theme.of(context).textTheme.titleLarge),
                   FilledButton.tonalIcon(
-                    onPressed: _readOnly ? null : _addSignature,
+                    onPressed: _mediaLocked ? null : _addSignature,
                     icon: const Icon(Icons.draw),
                     label: Text(_signatures.isEmpty ? 'Szignó' : 'Szignó cseréje'),
                   ),
@@ -400,7 +503,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     leading: const Icon(Icons.draw),
                     title: Text(signature.signerName),
                     subtitle: Text(signature.signedAt.toLocal().toString().substring(0, 16)),
-                    trailing: _readOnly
+                    trailing: _mediaLocked
                         ? null
                         : IconButton(
                             tooltip: 'Szignó törlése',
@@ -409,6 +512,17 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                           ),
                   ),
                 const SizedBox(height: 24),
+                if (_correcting) ...[
+                  Row(children: [
+                    Expanded(child: OutlinedButton(onPressed: _savingCorrection ? null : _cancelCorrection, child: const Text('Mégse'))),
+                    const SizedBox(width: 10),
+                    Expanded(child: FilledButton.icon(
+                      onPressed: _savingCorrection ? null : _saveCorrection,
+                      icon: const Icon(Icons.save_outlined),
+                      label: Text(_edits.isEmpty ? 'Javítás mentése' : 'Javítás mentése (${_edits.length})'),
+                    )),
+                  ]),
+                ],
                 if (_draft?.status == 'DRAFT') ...[
                   FilledButton.icon(onPressed: _finalizing ? null : _finalize, icon: const Icon(Icons.check), label: const Text('Jegyzőkönyv lezárása')),
                   if (_finalizing) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),

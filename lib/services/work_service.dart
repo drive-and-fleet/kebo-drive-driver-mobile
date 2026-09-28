@@ -304,6 +304,15 @@ class WorkService extends ChangeNotifier {
     return status;
   }
 
+  /// A lezárt jegyzőkönyv javítása: azonnal a telefonon, a szinkron viszi fel.
+  Future<void> correctInspection(LocalInspectionDraft draft, Map<String, ({Map<String, dynamic> value, List<String> optionIds})> changes,
+      {String? generalNote, String? reason}) async {
+    await local.correctInspection(draft.localId, changes, generalNote: generalNote, reason: reason);
+    log.info('insp', 'Jegyzőkönyv javítva a telefonon: ${draft.inspectionType} ${draft.localId} (${changes.length} mező), szinkronra vár');
+    notifyListeners();
+    unawaited(sync.run());
+  }
+
   /// Csak akkor kell, ha az átvételi jegyzőkönyv már lezárt, de a fuvar még
   /// nem indult el (egy korábbi appverzió után maradt állapot).
   Future<void> startLeg(DriverLeg leg) async {

@@ -189,4 +189,33 @@ void main() {
     await local.setInspectionCompletionPosition('i-pos', latitude: 47.25, longitude: 18.5, accuracy: 20);
     expect(await local.inspectionCompletionPosition('i-pos'), {'latitude': 47.25, 'longitude': 18.5, 'accuracyM': 20.0});
   });
+
+  test('javítás: lezárt jegyzőkönyv értéke a telefonon változik, a javítás sorba áll az indokkal; nyitottra tiltott', () async {
+    await local.cacheLegs([_leg('CORR', 'IN_PROGRESS')]);
+    final db = await LocalDatabase.instance.database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.insert('local_inspection', {
+      'local_id': 'c1', 'leg_key': 'CORR', 'form_type_id': 'f1', 'inspection_type': 'PICKUP',
+      'status': 'SYNCED', 'server_id': '900', 'general_note': 'régi', 'created_at': now, 'updated_at': now,
+    });
+    await db.insert('local_inspection_value', {'inspection_local_id': 'c1', 'field_definition_id': 'km', 'value_number': 12500});
+
+    await local.correctInspection('c1', {'km': (value: {'value_number': '12600'}, optionIds: const <String>[])},
+        generalNote: 'új megjegyzés', reason: 'Elírtam');
+
+    final values = await local.inspectionValues('c1');
+    expect(LocalRepository.normalizeNumber(values['km']?['value_number']), LocalRepository.normalizeNumber('12600'));
+    expect((await local.inspection('c1'))?.generalNote, 'új megjegyzés');
+    final ops = await db.query('sync_operation', where: "operation_type = 'CORRECT_INSPECTION' AND entity_id = 'c1'");
+    expect(ops.length, 1);
+    expect(ops.first['leg_key'], 'CORR');
+    expect((jsonDecode('${ops.first['payload']}') as Map)['reason'], 'Elírtam');
+    expect(await local.pendingCorrections('c1'), 1);
+
+    await db.insert('local_inspection', {
+      'local_id': 'c2', 'leg_key': 'CORR', 'form_type_id': 'f1', 'inspection_type': 'DROPOFF',
+      'status': 'DRAFT', 'created_at': now, 'updated_at': now,
+    });
+    await expectLater(local.correctInspection('c2', const {}), throwsA(isA<StateError>()));
+  });
 }

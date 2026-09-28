@@ -155,6 +155,9 @@ class SyncService extends ChangeNotifier {
             final changes = Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map);
             await api.updateLegVehicle(operation.entityId, {for (final e in changes.entries) e.key: e.value?.toString()});
             break;
+          case 'CORRECT_INSPECTION':
+            await _correctInspection(operation.entityId, Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map));
+            break;
           case 'CREATE_ORDER':
             final created = await api.createOrder(Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map));
             final realKey = '${created['legKey']}';
@@ -194,6 +197,23 @@ class SyncService extends ChangeNotifier {
   }
 
   bool _isDue(SyncOperation operation) => syncOperationDue(operation, DateTime.now().toUtc());
+
+  /// A lezárt jegyzőkönyv javítása: a telefonon lévő (már javított) értékek mennek fel.
+  /// A jegyzőkönyv maga ugyanazon az úton korábban áll a sorban, így itt már fent van.
+  Future<void> _correctInspection(String localId, Map<String, dynamic> payload) async {
+    final draft = await local.inspection(localId);
+    if (draft == null) throw StateError('Hiányzó lokális jegyzőkönyv: $localId');
+    final serverId = draft.serverId;
+    if (serverId == null) throw StateError('A jegyzőkönyv még nincs fent a szerveren; a javítás utána megy.');
+    final result = await api.correctInspection(
+      serverId,
+      inspectionValuesPayload(await local.inspectionValues(localId), await local.phaseFieldIds(draft.formTypeId, draft.inspectionType)),
+      generalNote: draft.generalNote,
+      reason: payload['reason'] as String?,
+      deviceOperationId: '${payload['deviceOperationId']}',
+    );
+    log.info('sync', 'Jegyzőkönyv javítva a szerveren: $serverId (${result['changed'] == true ? '${result['correctionNo']}. javítás' : 'nem volt változás'})');
+  }
 
   Future<void> _syncInspection(String localId) async {
     final draft = await local.inspection(localId);
