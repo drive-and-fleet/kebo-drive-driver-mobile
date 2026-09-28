@@ -7,7 +7,6 @@ import '../../models/trip_rules.dart';
 import '../../services/app_services.dart';
 import '../leg_flow.dart';
 import '../theme.dart';
-import '../widgets/leg_card.dart';
 import 'leg_detail_screen.dart';
 
 /// „Ma”: fent az a fuvar, amelyikkel a sofőr úton van – ha nincs ilyen, a mai
@@ -132,14 +131,24 @@ class TodayScreenState extends State<TodayScreen> {
             _CurrentTrip(
               leg: current,
               overdue: isOverdue(current, now),
+              waitingCount: today.where((l) => l.status != 'IN_PROGRESS').length,
               syncState: _syncStates[current.legKey],
               busy: _busy,
               onOpen: () => _open(current),
               onAct: () => _act(current),
             ),
           if (rest.isNotEmpty) ...[
-            _Heading('Utána még ma (${rest.length})'),
-            for (final leg in rest) LegCard(leg: leg, syncState: _syncStates[leg.legKey], onTap: () => _open(leg)),
+            _Heading('További mai fuvarok (${rest.length})'),
+            // Felvételi idő szerint, tömören: ne vonja el a figyelmet a fenti kártyáról.
+            Card(
+              margin: EdgeInsets.zero,
+              child: Column(children: [
+                for (var i = 0; i < rest.length; i++) ...[
+                  if (i > 0) const Divider(height: 1),
+                  _LaterTodayRow(leg: rest[i], onTap: () => _open(rest[i])),
+                ],
+              ]),
+            ),
           ],
         ],
       ),
@@ -158,11 +167,53 @@ class _Heading extends StatelessWidget {
       );
 }
 
+/// Egy további mai fuvar egy sorban: idő és rendszám nagyban, a két hely kisebben.
+class _LaterTodayRow extends StatelessWidget {
+  const _LaterTodayRow({required this.leg, required this.onTap});
+  final DriverLeg leg;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = leg.plannedStart?.toLocal();
+    final time = t == null ? '––:––' : '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    const small = TextStyle(fontSize: 14, color: AppColors.ink600);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SizedBox(width: 58, child: Text(time, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.ink900))),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(leg.registrationNumber, style: const TextStyle(fontFamily: 'BarlowCondensed', fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.ink900)),
+              Text('Felvétel: ${leg.fromPlace}', maxLines: 1, overflow: TextOverflow.ellipsis, style: small),
+              Text('Leadás: ${leg.toPlace}', maxLines: 1, overflow: TextOverflow.ellipsis, style: small),
+            ]),
+          ),
+          const Icon(Icons.chevron_right, color: AppColors.ink400),
+        ]),
+      ),
+    );
+  }
+}
+
 /// A mostani fuvar: nagy, egyértelmű kártya, alatta a teendő egyetlen gombja.
+/// Úton: pirosas; a mai következő: zöld; a lekésett: narancs.
 class _CurrentTrip extends StatelessWidget {
-  const _CurrentTrip({required this.leg, required this.overdue, required this.syncState, required this.busy, required this.onOpen, required this.onAct});
+  const _CurrentTrip({
+    required this.leg,
+    required this.overdue,
+    required this.waitingCount,
+    required this.syncState,
+    required this.busy,
+    required this.onOpen,
+    required this.onAct,
+  });
   final DriverLeg leg;
   final bool overdue;
+  /// Hány mára szóló, még át nem vett fuvar van (ezzel együtt).
+  final int waitingCount;
   final LegSyncState? syncState;
   final bool busy;
   final VoidCallback onOpen;
@@ -171,7 +222,14 @@ class _CurrentTrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final running = leg.status == 'IN_PROGRESS';
-    final strip = running ? AppColors.signalBlue : overdue ? AppColors.signalAmber : AppColors.panel800;
+    final strip = running ? AppColors.signalRed : overdue ? AppColors.signalAmber : AppColors.signalGreen;
+    final title = running
+        ? 'ÚTON VAGY EZZEL AZ AUTÓVAL'
+        : overdue
+            ? 'LEKÉSETT – MÉG NEM VETTED ÁT'
+            : waitingCount > 1
+                ? 'MAI KÖVETKEZŐ FUVAR (MA MÉG $waitingCount)'
+                : 'MAI KÖVETKEZŐ FUVAR';
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Material(
         color: AppColors.sheet000,
@@ -184,10 +242,12 @@ class _CurrentTrip extends StatelessWidget {
               color: strip,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               child: Row(children: [
-                Text(running ? 'ÚTON' : overdue ? 'LEKÉSETT – MÉG NEM VETTED ÁT' : 'KÖVETKEZŐ FUVAROD',
-                    style: const TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, letterSpacing: 0.8, color: Colors.white, fontSize: 16)),
-                const Spacer(),
-                if (leg.plannedStart != null) Text(shortTime(leg.plannedStart), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+                Expanded(
+                  child: Text(title,
+                      style: const TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, letterSpacing: 0.8, color: Colors.white, fontSize: 16)),
+                ),
+                if (leg.plannedStart != null)
+                  Text(overdue ? shortTime(leg.plannedStart) : _hm(leg.plannedStart!), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
               ]),
             ),
             Padding(
@@ -213,7 +273,11 @@ class _CurrentTrip extends StatelessWidget {
       SizedBox(
         height: 60,
         child: FilledButton.icon(
-          style: FilledButton.styleFrom(textStyle: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
+          style: FilledButton.styleFrom(
+            backgroundColor: running ? AppColors.signalRed : AppColors.signalGreen,
+            foregroundColor: Colors.white,
+            textStyle: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
+          ),
           onPressed: busy || leg.status == 'REVOKED' ? null : onAct,
           icon: Icon(running ? Icons.flag : Icons.key, size: 26),
           label: Text(running ? 'Autó leadása' : 'Autó átvétele'),
@@ -276,6 +340,25 @@ class _TransferRequest extends StatelessWidget {
   }
 }
 
+const _monthNames = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
+const _dayNames = ['hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat', 'vasárnap'];
+
+String _hm(DateTime t) {
+  final l = t.toLocal();
+  return '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+}
+
+/// „Holnap, szeptember 29. (kedd)” / „Szeptember 30. (szerda)”.
+String _dayLabel(DateTime t, DateTime now) {
+  final l = t.toLocal();
+  final day = DateTime(l.year, l.month, l.day);
+  final tomorrow = DateTime(now.year, now.month, now.day + 1);
+  final name = '${_monthNames[l.month - 1]} ${l.day}. (${_dayNames[l.weekday - 1]})';
+  return day == tomorrow ? 'Holnap, $name' : '${name[0].toUpperCase()}${name.substring(1)}';
+}
+
+/// Mára nincs több fuvar. Alatta – jól elkülönítve, szürkén – a következő
+/// előjegyzett fuvar, amely NEM mára szól: a nap neve nagyban látszik.
 class _Empty extends StatelessWidget {
   const _Empty({required this.onBrowseFree, required this.next, required this.onOpenNext});
   final VoidCallback onBrowseFree;
@@ -284,26 +367,51 @@ class _Empty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final leg = next;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 16),
-      child: Column(children: [
-        const Icon(Icons.local_taxi_outlined, size: 64, color: AppColors.ink600),
-        const SizedBox(height: 12),
-        const Text('Mára nincs több fuvarod.', textAlign: TextAlign.center, style: TextStyle(fontSize: AppText.body)),
-        if (next != null) ...[
-          const SizedBox(height: 16),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.event),
-              title: Text('Következő: ${shortTime(next!.plannedStart)}'),
-              subtitle: Text('${next!.registrationNumber} · ${next!.fromPlace}'),
-              trailing: const Icon(Icons.chevron_right),
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Icon(Icons.check_circle_outline, size: 64, color: AppColors.signalGreen),
+        const SizedBox(height: 8),
+        const Text('Mára nincs több fuvarod.',
+            textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.ink900)),
+        if (leg != null) ...[
+          const SizedBox(height: 28),
+          Material(
+            color: AppColors.sheet050,
+            shape: RoundedRectangleBorder(side: const BorderSide(color: AppColors.ruleFirm), borderRadius: BorderRadius.circular(8)),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
               onTap: onOpenNext,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Container(
+                  color: AppColors.sheet100,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  child: const Row(children: [
+                    Icon(Icons.event, size: 18, color: AppColors.ink600),
+                    SizedBox(width: 8),
+                    Text('ELŐJEGYZETT FUVAR – NEM MÁRA SZÓL',
+                        style: TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, letterSpacing: 0.8, color: AppColors.ink600, fontSize: 15)),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (leg.plannedStart != null)
+                      Text('${_dayLabel(leg.plannedStart!, DateTime.now())} · ${_hm(leg.plannedStart!)}',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.ink900)),
+                    const SizedBox(height: 4),
+                    Text(leg.registrationNumber, style: const TextStyle(fontFamily: 'BarlowCondensed', fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.ink600)),
+                    Text('Felvétel: ${leg.fromPlace}', style: const TextStyle(fontSize: 14, color: AppColors.ink600)),
+                    Text('Leadás: ${leg.toPlace}', style: const TextStyle(fontSize: 14, color: AppColors.ink600)),
+                  ]),
+                ),
+              ]),
             ),
           ),
         ],
-        const SizedBox(height: 16),
-        FilledButton.icon(onPressed: onBrowseFree, icon: const Icon(Icons.playlist_add_check), label: const Text('Szabad fuvarok')),
+        const SizedBox(height: 24),
+        Center(child: OutlinedButton.icon(onPressed: onBrowseFree, icon: const Icon(Icons.playlist_add_check), label: const Text('Szabad fuvarok'))),
       ]),
     );
   }

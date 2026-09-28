@@ -199,7 +199,7 @@ class _RunningBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: AppColors.signalBlue,
+        color: AppColors.signalRed,
         child: InkWell(
           onTap: onTap,
           child: Padding(
