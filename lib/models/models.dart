@@ -426,3 +426,21 @@ DateTime? _date(dynamic value) {
   if (value == null || '$value'.isEmpty) return null;
   return DateTime.tryParse('$value');
 }
+
+/// Egy nyitott út a szolgálat táblájáról: kinél van, és mit tehet vele a sofőr.
+class OpenLeg {
+  const OpenLeg({required this.leg, this.driverName, this.mine = false, this.canClaim = false, this.canTakeOver = false});
+  final DriverLeg leg;
+  final String? driverName;
+  final bool mine;
+  final bool canClaim;
+  final bool canTakeOver;
+
+  factory OpenLeg.fromJson(Map<String, dynamic> json) => OpenLeg(
+        leg: DriverLeg.fromJson(json),
+        driverName: json['driverName']?.toString(),
+        mine: json['mine'] == true,
+        canClaim: json['canClaim'] == true,
+        canTakeOver: json['canTakeOver'] == true,
+      );
+}

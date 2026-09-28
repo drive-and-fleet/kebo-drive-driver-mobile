@@ -237,6 +237,28 @@ class WorkService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// A szolgálat nyitott útjai (csak hálózattal): ki viszi, felvehető / átvehető-e.
+  Future<List<OpenLeg>> openLegs() => api.openLegs();
+
+  /// „Átveszem”: mint a felvételnél, előbb minden letöltődik, ami offline kell,
+  /// utána az átvétel; a Munkáim frissül.
+  Future<void> takeOverAndDownload(DriverLeg leg) async {
+    log.info('work', 'Fuvar átvétele másik sofőrtől: ${leg.legKey} (${leg.orderNo} #${leg.sequenceNo}, ${leg.registrationNumber})');
+    final forms = await api.forms(leg.serviceOrgId);
+    if (forms.isEmpty) throw StateError('Nincs aktív űrlap konfigurálva ehhez a sofőrszolgálathoz.');
+    await local.cacheForms(leg.serviceOrgId, forms);
+    await local.cachePreviousInspections(leg.legKey, await api.previousInspections(leg.legKey));
+    await api.takeOver(leg.legKey);
+    await local.cacheLegs([leg.copyWithStatus('ASSIGNED')]);
+    try {
+      await _refreshFromServer(full: false, why: 'átvétel');
+    } catch (e) {
+      log.warn('work', 'Az átvétel után a munkalista most nem frissült', e);
+    }
+    notifyListeners();
+    log.info('work', 'Fuvar átvéve és letöltve: ${leg.legKey}');
+  }
+
   /// A szolgálat jegyzőkönyv-típusa(i). Új jegyzőkönyvhöz csak az aktív ([activeOnly]);
   /// egy már megkezdett folytatásához a saját (akár azóta inaktivált) típusa is.
   Future<List<FormTypeConfig>> formsFor(DriverLeg leg, {bool activeOnly = false}) => local.forms(leg.serviceOrgId, activeOnly: activeOnly);

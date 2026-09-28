@@ -32,6 +32,17 @@ class DriverApi {
     return raw.map((e) => DriverLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
+  /// A szolgálat(ok) minden nyitott útja, azzal, hogy kinél van.
+  Future<List<OpenLeg>> openLegs() async {
+    final raw = await _http.get('/api/v1/driver/open-legs', token: await _token()) as List<dynamic>;
+    return raw.map((e) => OpenLeg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  /// „Átveszem”: egy másik sofőr még el nem indított útja (ha a szolgálat engedi).
+  Future<void> takeOver(String legKey) async {
+    await _http.post('/api/v1/driver/legs/$legKey/take-over', token: await _token());
+  }
+
   Future<List<dynamic>> forms(String serviceOrgId) async =>
       (await _http.get('/api/v1/driver/services/$serviceOrgId/forms', token: await _token())) as List<dynamic>;
 
