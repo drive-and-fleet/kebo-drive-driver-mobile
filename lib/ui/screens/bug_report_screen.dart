@@ -27,6 +27,7 @@ class _BugReportScreenState extends State<BugReportScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Hibajelentés');
     log.info('bug', 'Hibajelentés képernyő megnyitva');
     AppLog.instance.collect().then((text) {
       if (mounted) setState(() => _logBytes = utf8.encode(text).length);

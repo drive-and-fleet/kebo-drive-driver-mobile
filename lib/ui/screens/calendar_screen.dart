@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../logging/app_log.dart';
+
 import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
@@ -275,6 +277,8 @@ class _DayScreenState extends State<DayScreen> {
   @override
   void initState() {
     super.initState();
+    final d = widget.day;
+    log.info('ui', 'Képernyő: Előjegyzés – ${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}. fuvarjai');
     _load();
   }
 

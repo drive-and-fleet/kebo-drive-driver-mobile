@@ -6,6 +6,7 @@ import '../local/file_store.dart';
 import '../local/local_database.dart';
 import '../local/local_repository.dart';
 import 'location_service.dart';
+import 'activity_service.dart';
 import 'push_service.dart';
 import 'sync_service.dart';
 import 'work_service.dart';
@@ -19,8 +20,7 @@ class AppServices {
     required this.sync,
     required this.work,
     required this.location,
-    required this.push,
-  });
+    required this.push, required this.activity});
 
   final LocalRepository local;
   final FileStore fileStore;
@@ -30,6 +30,7 @@ class AppServices {
   final WorkService work;
   final LocationService location;
   final PushService push;
+  final ActivityService activity;
 
   static Future<AppServices> create() async {
     final local = LocalRepository(LocalDatabase.instance);
@@ -43,6 +44,7 @@ class AppServices {
     final work = WorkService(api, local, sync)..startAutoRefresh(() => auth.isSignedIn);
     final location = LocationService(api, local, work)..initialize();
     final push = PushService(api, work, location);
+    final activity = ActivityService(api, auth);
     return AppServices._(
       local: local,
       fileStore: fileStore,
@@ -52,6 +54,7 @@ class AppServices {
       work: work,
       location: location,
       push: push,
+      activity: activity,
     );
   }
 }

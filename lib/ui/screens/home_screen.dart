@@ -44,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (tab == null || !mounted) return;
     HomeScreen.tabRequest.value = null;
     setState(() => _index = tab);
+    log.debug('ui', 'Fül: ${_tabs[tab]}');
     unawaited(_refreshCurrentTab());
     unawaited(_searchKey.currentState?.refresh());
   }
@@ -66,6 +67,7 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.services.work.addListener(_loadRunning);
     widget.services.sync.addListener(_loadRunning);
     HomeScreen.tabRequest.addListener(_onTabRequest);
+    log.debug('ui', 'Fül: ${_tabs[_index]}');
     _loadRunning();
     final push = widget.services.push;
     push.openLeg.addListener(_openFromPush);
@@ -129,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _menu(String action) {
+    log.info('ui', 'Képernyő: ${const {'transfers': 'Átadások', 'sync': 'Szinkron'}[action] ?? 'Hibajelentés'}');
     final page = switch (action) {
       'transfers' => TransfersScreen(services: widget.services),
       'sync' => Scaffold(appBar: AppBar(title: const Text('Szinkron')), body: SyncScreen(services: widget.services)),

@@ -52,6 +52,14 @@ class DriverApi {
     return '${result['id']}';
   }
 
+  /// Tevékenységnapló: a megnyitott képernyők egy csomagban (a szerver azonnal válaszol).
+  Future<void> postActivity(List<Map<String, String>> entries, String? appVersion) async {
+    await _http.post('/api/v1/driver/activity', token: await _token(), body: {
+      'entries': entries,
+      if (appVersion != null) 'appVersion': appVersion,
+    });
+  }
+
   /// Egy út lezárt jegyzőkönyvei, csak olvasásra (a teljesített út jegyzőkönyve már nincs a telefonon).
   Future<List<Map<String, dynamic>>> legInspections(String legKey) async =>
       ((await _http.get('/api/v1/driver/legs/$legKey/inspections', token: await _token())) as List<dynamic>)

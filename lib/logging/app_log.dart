@@ -40,6 +40,10 @@ class AppLog {
     }
   }
 
+  /// A tevékenységnapló figyeli: minden megnyitott képernyő („Képernyő: …”, „Fül: …”).
+  static void Function(String screen)? onScreen;
+  static final _screenLine = RegExp(r'^(?:Képernyő|Fül): (.+)$');
+
   void debug(String tag, String message) => _add('D', tag, message);
   void info(String tag, String message) => _add('I', tag, message);
   void warn(String tag, String message, [Object? error]) => _add('W', tag, error == null ? message : '$message — $error');
@@ -53,6 +57,16 @@ class AppLog {
   static String _trim(StackTrace stack) => stack.toString().split('\n').take(12).join('\n');
 
   void _add(String level, String tag, String message) {
+    if (tag == 'ui') {
+      final screen = _screenLine.firstMatch(message)?.group(1);
+      if (screen != null) {
+        try {
+          onScreen?.call(screen);
+        } catch (_) {
+          // A napló soha nem zavarhatja a munkát.
+        }
+      }
+    }
     final line = '${DateTime.now().toUtc().toIso8601String()} $level ${tag.padRight(8)} $message';
     if (kDebugMode) debugPrint(line);
     _memory.addLast(line);

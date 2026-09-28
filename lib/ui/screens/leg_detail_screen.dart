@@ -32,11 +32,11 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
   bool _pickupExists = false;
   bool _dropoffExists = false;
   bool _releasable = false;
+  bool _viewLogged = false;
 
   @override
   void initState() {
     super.initState();
-    log.info('ui', 'Képernyő: fuvar adatlap ${widget.legKey}');
     widget.services.sync.addListener(_refresh);
     _load();
   }
@@ -59,6 +59,11 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     final dropoff = await widget.services.local.inspectionForLeg(legKey, 'DROPOFF');
     final releasable = leg != null && await canRelease(widget.services, leg);
     if (!mounted) return;
+    // Tevékenységnapló: egyszer, a rendszámmal (a belső azonosító nem olvasható).
+    if (!_viewLogged && leg != null) {
+      _viewLogged = true;
+      log.info('ui', 'Képernyő: Fuvar adatlap – ${leg.registrationNumber}');
+    }
     setState(() {
       _leg = leg;
       _returnLeg = returnLeg;
@@ -108,6 +113,7 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
         ));
         return;
       }
+      log.info('ui', 'Képernyő: ${phase == 'PICKUP' ? 'Átvételi' : 'Leadási'} jegyzőkönyv (megtekintés) – ${leg.registrationNumber}');
       await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => RemoteInspectionScreen(inspection: found.last, plate: leg.registrationNumber),
       ));

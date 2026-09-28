@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../logging/app_log.dart';
+
 import '../../local/local_repository.dart';
 import '../../models/local_models.dart';
 import '../../models/models.dart';
@@ -29,6 +31,7 @@ class _DoneScreenState extends State<DoneScreen> {
   @override
   void initState() {
     super.initState();
+    log.info('ui', 'Képernyő: Fuvar lezárva – ${widget.leg.registrationNumber}');
     widget.services.sync.addListener(_load);
     _load();
   }
