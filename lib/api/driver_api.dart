@@ -64,10 +64,14 @@ class DriverApi {
     await _http.put('/api/v1/driver/legs/$legKey/planned-start', token: await _token(), body: payload);
   }
 
-  /// Címjavaslatok gépelés közben (TomTom, tartalékként OpenStreetMap) – csak hálózattal.
-  Future<List<String>> suggestAddresses(String query) async {
-    final raw = await _http.get('/api/v1/driver/geo/suggest', token: await _token(), query: {'q': query}) as List<dynamic>;
-    return raw.map((e) => '${(e as Map)['label']}').where((label) => label.trim().isNotEmpty).toList();
+  /// Címjavaslatok gépelés közben (TomTom, Geoapify, tartalékként OpenStreetMap) – csak
+  /// hálózattal. [geoapify]: volt-e Geoapify-találat (az ingyenes csomag kéri a nevét).
+  Future<({List<String> labels, bool geoapify})> suggestAddresses(String query) async {
+    final raw = (await _http.get('/api/v1/driver/geo/suggest', token: await _token(), query: {'q': query}) as List<dynamic>).cast<Map>();
+    return (
+      labels: raw.map((e) => '${e['label']}').where((label) => label.trim().isNotEmpty).toList(),
+      geoapify: raw.any((e) => e['source'] == 'GEOAPIFY'),
+    );
   }
 
   /// „Leadom”: a sofőr leveszi magáról a még el nem indított utat (az indok nem kötelező).

@@ -9,7 +9,7 @@ class AddressInput extends StatefulWidget {
 
   final TextEditingController controller;
   final String label;
-  final Future<List<String>> Function(String query) suggest;
+  final Future<({List<String> labels, bool geoapify})> Function(String query) suggest;
   final String? Function(String?)? validator;
 
   @override
@@ -22,6 +22,8 @@ class _AddressInputState extends State<AddressInput> {
   Completer<void>? _waiting;
   String _lastQuery = '';
   List<String> _lastResult = const [];
+  /// A listában Geoapify-találat is van: a nevét alul feltüntetjük (az ingyenes csomag feltétele).
+  bool _geoapify = false;
 
   @override
   void dispose() {
@@ -45,8 +47,9 @@ class _AddressInputState extends State<AddressInput> {
     try {
       final result = await widget.suggest(query);
       _lastQuery = query;
-      _lastResult = result;
-      return result;
+      _lastResult = result.labels;
+      _geoapify = result.geoapify;
+      return result.labels;
     } catch (_) {
       return const [];
     }
@@ -89,6 +92,11 @@ class _AddressInputState extends State<AddressInput> {
                       leading: const Icon(Icons.place_outlined),
                       title: Text(option),
                       onTap: () => onSelected(option),
+                    ),
+                  if (_geoapify)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Text('Powered by Geoapify', style: TextStyle(fontSize: 12, color: Color(0xFF4A5F6B))),
                     ),
                 ],
               ),
