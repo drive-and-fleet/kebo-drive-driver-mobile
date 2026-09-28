@@ -104,6 +104,9 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     switch (action) {
       case 'vehicle':
         await _editVehicle(leg);
+      case 'time':
+        await rescheduleDialog(context, widget.services, leg);
+        await _load(quiet: true);
       case 'pickup':
         await _view('PICKUP');
       case 'dropoff':
@@ -205,6 +208,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
               itemBuilder: (_) => [
                 if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status))
                   const PopupMenuItem(value: 'vehicle', child: ListTile(leading: Icon(Icons.edit), title: Text('Autó adatai'))),
+                if (leg.status == 'ASSIGNED')
+                  const PopupMenuItem(value: 'time', child: ListTile(leading: Icon(Icons.schedule), title: Text('Felvétel időpontja'))),
                 if (_pickupExists) const PopupMenuItem(value: 'pickup', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Átvételi jegyzőkönyv'))),
                 if (_dropoffExists) const PopupMenuItem(value: 'dropoff', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Leadási jegyzőkönyv'))),
                 if (leg.status == 'ASSIGNED' && !LocalRepository.isLocalLeg(leg.legKey))

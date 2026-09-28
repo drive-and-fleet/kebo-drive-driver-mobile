@@ -5,6 +5,7 @@ import '../logging/app_log.dart';
 import '../models/models.dart';
 import '../services/app_services.dart';
 import 'screens/inspection_editor_screen.dart';
+import 'screens/leg_detail_screen.dart';
 import 'theme.dart';
 
 /// A fuvar lépései egy helyen, hogy a „Most” képernyő és a fuvar adatlapja
@@ -24,6 +25,13 @@ String? nextPhase(DriverLeg leg) => switch (leg.status) {
 /// A fuvar indítását / lezárását a jegyzőkönyv lezárása végzi (egy lokális tranzakció).
 Future<void> runPhase(BuildContext context, AppServices services, DriverLeg leg, String phase, {bool copy = true}) async {
   log.info('work', '${phase == 'PICKUP' ? 'Fuvar indítása' : 'Fuvar lezárása'}: ${leg.legKey} (${leg.status}), másolás: ${copy ? 'be' : 'ki'}');
+  if (phase == 'PICKUP') {
+    final allowed = await _mayStart(context, services, leg);
+    if (!allowed || !context.mounted) return;
+    // Az időpont-módosítás után a friss adattal megy tovább.
+    leg = await services.local.cachedLeg(leg.legKey) ?? leg;
+    if (!context.mounted) return;
+  }
   final existing = await services.local.inspectionForLeg(leg.legKey, phase);
   if (existing != null && existing.status != 'DRAFT') {
     // A jegyzőkönyv már lezárt, csak az állapotváltás maradt el (korábbi appverzió):
@@ -38,6 +46,109 @@ Future<void> runPhase(BuildContext context, AppServices services, DriverLeg leg,
   if (!context.mounted) return;
   // A leadás lezárása után a szerkesztő a „Kész” képernyőre vált (körfuvarnál ott a várakozás).
   await openInspection(context, services, leg, phase, copy: copy);
+}
+
+/// Átveheti-e most az autót. Ha nem, megmondja miért, és a megoldást is felkínálja:
+/// a futó fuvar megnyitását, vagy későbbi napra tervezett útnál az időpont módosítását.
+Future<bool> _mayStart(BuildContext context, AppServices services, DriverLeg leg) async {
+  final blocker = await services.work.startBlocker(leg);
+  if (blocker == null) return true;
+  log.info('work', 'Indítás nem engedélyezett: ${leg.legKey} – ${blocker.message}');
+  if (!context.mounted) return false;
+  final running = blocker.running;
+  final action = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.block, color: AppColors.signalRed, size: 36),
+      title: Text(running != null ? 'Már úton vagy egy autóval' : 'Ez a fuvar még nem mára szól'),
+      content: Text(blocker.laterDay ? '${blocker.message}\nHa mégis ma kell elvinni, módosítsd a felvétel időpontját.' : blocker.message),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Rendben')),
+        if (running != null)
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, 'open'), child: Text('${running.registrationNumber} megnyitása')),
+        if (blocker.laterDay)
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, 'reschedule'), child: const Text('Időpont módosítása')),
+      ],
+    ),
+  );
+  if (!context.mounted) return false;
+  if (action == 'open' && running != null) {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: services, legKey: running.legKey)));
+    return false;
+  }
+  if (action == 'reschedule') {
+    final changed = await rescheduleDialog(context, services, leg);
+    if (!changed || !context.mounted) return false;
+    final fresh = await services.local.cachedLeg(leg.legKey) ?? leg;
+    return await services.work.startBlocker(fresh) == null;
+  }
+  return false;
+}
+
+/// A felvétel időpontjának módosítása (még el nem indított útnál): nap, óra, és
+/// nem kötelező indok. A módosítás naplózva megy fel, az iroda látja.
+Future<bool> rescheduleDialog(BuildContext context, AppServices services, DriverLeg leg) async {
+  var at = (leg.plannedStart ?? DateTime.now()).toLocal();
+  final reason = TextEditingController();
+  String two(int v) => v.toString().padLeft(2, '0');
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialog) => AlertDialog(
+        title: const Text('Felvétel időpontja'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('${leg.registrationNumber} · ${leg.fromPlace}'),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text('${at.year}.${two(at.month)}.${two(at.day)}.'),
+                  onPressed: () async {
+                    final now = DateTime.now();
+                    final first = DateTime(now.year, now.month, now.day);
+                    final day = await showDatePicker(context: dialogContext, initialDate: at.isBefore(first) ? first : at, firstDate: first, lastDate: DateTime(now.year + 1, 12, 31));
+                    if (day != null) setDialog(() => at = DateTime(day.year, day.month, day.day, at.hour, at.minute));
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.schedule),
+                  label: Text('${two(at.hour)}:${two(at.minute)}'),
+                  onPressed: () async {
+                    final time = await showTimePicker(context: dialogContext, initialTime: TimeOfDay.fromDateTime(at));
+                    if (time != null) setDialog(() => at = DateTime(at.year, at.month, at.day, time.hour, time.minute));
+                  },
+                ),
+              ),
+            ]),
+            TextButton(onPressed: () => setDialog(() => at = DateTime.now()), child: const Text('Most')),
+            TextField(controller: reason, maxLength: 300, decoration: const InputDecoration(labelText: 'Indok (nem kötelező)')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Mentés')),
+        ],
+      ),
+    ),
+  );
+  final text = reason.text;
+  reason.dispose();
+  if (ok != true) return false;
+  try {
+    await services.work.rescheduleLeg(leg, at, reason: text);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Új felvételi időpont: ${at.year}.${two(at.month)}.${two(at.day)}. ${two(at.hour)}:${two(at.minute)}')));
+    }
+    return true;
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nem sikerült: $e')));
+    return false;
+  }
 }
 
 /// A fázis jegyzőkönyve: a meglévő (lezártnál csak megtekintés), vagy új.

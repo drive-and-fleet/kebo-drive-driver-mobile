@@ -8,6 +8,7 @@ import '../local/local_repository.dart';
 import '../logging/app_log.dart';
 import '../models/local_models.dart';
 import '../models/models.dart';
+import '../models/trip_rules.dart';
 import 'inspection_validator.dart';
 import 'sync_service.dart';
 
@@ -289,9 +290,46 @@ class WorkService extends ChangeNotifier {
   /// lokális tranzakció, a hálózat nincs a kritikus úton. A szinkron a
   /// háttérben indul; az állapotát a SyncService jelzi a felületnek.
   /// Visszaadja az út új lokális státuszát.
+  /// Miért nem vehető most át az autó (null: átvehető). Egyszerre csak egy autó
+  /// lehet a sofőrnél, és későbbi napra tervezett út ma még nem indítható.
+  Future<({String message, DriverLeg? running, bool laterDay})?> startBlocker(DriverLeg leg) async {
+    final running = runningLeg(await local.cachedLegs(), except: leg.legKey);
+    if (running != null) {
+      return (
+        message: 'Egyszerre csak egy autót vihetsz. Előbb add le ezt: ${running.registrationNumber} (${running.toPlace}).',
+        running: running,
+        laterDay: false,
+      );
+    }
+    if (plannedForLaterDay(leg.plannedStart, DateTime.now())) {
+      final t = leg.plannedStart!.toLocal();
+      String two(int v) => v.toString().padLeft(2, '0');
+      return (
+        message: 'Ez a fuvar ${t.year}.${two(t.month)}.${two(t.day)}. ${two(t.hour)}:${two(t.minute)} időpontra van tervezve, ma még nem veheted át.',
+        running: null,
+        laterDay: true,
+      );
+    }
+    return null;
+  }
+
+  /// A felvétel új időpontja: azonnal a telefonon, a szinkron viszi fel (naplózva).
+  Future<void> rescheduleLeg(DriverLeg leg, DateTime plannedStart, {String? reason}) async {
+    await local.rescheduleLeg(leg.legKey, plannedStart, reason: reason);
+    log.info('work', 'Felvétel időpontja módosítva a telefonon: ${leg.legKey} → ${plannedStart.toIso8601String()} (szinkronra vár)');
+    notifyListeners();
+    unawaited(sync.run());
+  }
+
   /// [onStep] a képernyőnek mondja, hol tart a lezárás (a sofőr lássa, hogy halad).
   Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form, {void Function(String step)? onStep}) async {
     onStep?.call('Adatok ellenőrzése…');
+    if (draft.inspectionType == 'PICKUP') {
+      // Az átvétel lezárása indítja az utat: itt is érvényes a tiltás (közben változhatott).
+      final leg = await local.cachedLeg(LocalRepository.currentLegKey(draft.legKey));
+      final blocker = leg == null ? null : await startBlocker(leg);
+      if (blocker != null) throw StateError(blocker.message);
+    }
     final result = await InspectionValidator(local).validate(draft, form);
     if (!result.valid) {
       log.warn('insp', 'Lezárás elutasítva: ${draft.inspectionType} ${draft.localId}', result.errors.join('; '));

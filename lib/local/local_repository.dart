@@ -33,12 +33,20 @@ class LocalRepository {
     // amíg fel nem megy (különben a frissítés visszaírná a régit).
     final vehicleEdits = <String, Map<String, Object?>>{};
     final editRows = await db.rawQuery('''
-      SELECT leg.order_vehicle_id AS ov, leg.registration_number, leg.vehicle_user_email, leg.vehicle_extra_email
+      SELECT leg.order_vehicle_id AS ov, leg.registration_number, leg.vehicle_user_email, leg.vehicle_extra_email,
+             leg.make, leg.model, leg.color, leg.vehicle_user_name, leg.vehicle_user_phone
         FROM sync_operation op JOIN cached_leg leg ON leg.leg_key = op.leg_key
        WHERE op.operation_type = 'UPDATE_VEHICLE' AND op.state IN ('PENDING','RUNNING','ERROR','CONFLICT')''');
     for (final row in editRows) {
       vehicleEdits['${row['ov']}'] = row;
     }
+    // A sofőr módosította a felvétel időpontját, és még nem ment fel: a telefoné nyer.
+    final timeEdits = <String, Object?>{
+      for (final row in await db.rawQuery('''
+        SELECT leg.leg_key, leg.planned_start FROM sync_operation op JOIN cached_leg leg ON leg.leg_key = op.entity_id
+         WHERE op.operation_type = 'RESCHEDULE_LEG' AND op.state IN ('PENDING','RUNNING','ERROR','CONFLICT')'''))
+        '${row['leg_key']}': row['planned_start'],
+    };
     final batch = db.batch();
     for (final leg in legs) {
       final map = leg.toCacheMap();
@@ -50,7 +58,11 @@ class LocalRepository {
         map['registration_number'] = edit['registration_number'];
         map['vehicle_user_email'] = edit['vehicle_user_email'];
         map['vehicle_extra_email'] = edit['vehicle_extra_email'];
+        for (final column in ['make', 'model', 'color', 'vehicle_user_name', 'vehicle_user_phone']) {
+          map[column] = edit[column];
+        }
       }
+      if (timeEdits.containsKey(leg.legKey)) map['planned_start'] = timeEdits[leg.legKey];
       batch.insert('cached_leg', map, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -131,6 +143,27 @@ class LocalRepository {
         });
       }
       return true;
+    });
+  }
+
+  /// A sofőr módosítja a még el nem indított út felvételi időpontját (pl. ma kell
+  /// elvinni a holnapra tervezettet). Azonnal érvényes a telefonon; a szinkron
+  /// viszi fel, a szerver naplózza a régi és az új időpontot.
+  Future<void> rescheduleLeg(String legKey, DateTime plannedStart, {String? reason}) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final rows = await txn.query('cached_leg', columns: ['status'], where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
+      if (rows.isEmpty) throw StateError('Az út nincs a telefonon.');
+      if (rows.first['status'] != 'ASSIGNED') throw StateError('Csak a még el nem indított fuvar időpontja módosítható.');
+      final now = DateTime.now().toUtc().toIso8601String();
+      final at = plannedStart.toUtc().toIso8601String();
+      await txn.update('cached_leg', {'planned_start': at, 'updated_at': now}, where: 'leg_key = ?', whereArgs: [legKey]);
+      await txn.insert('sync_operation', {
+        'id': _uuid.v4(), 'operation_type': 'RESCHEDULE_LEG', 'entity_id': legKey, 'leg_key': legKey, 'state': 'PENDING',
+        'attempts': 0, 'last_error': null,
+        'payload': jsonEncode({'plannedStart': at, if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim()}),
+        'created_at': now, 'updated_at': now,
+      });
     });
   }
 

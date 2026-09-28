@@ -59,6 +59,11 @@ class DriverApi {
     await _http.post('/api/v1/driver/legs/$legKey/claim', token: await _token());
   }
 
+  /// A felvétel új időpontja (a szerver naplózza a régit és az újat, az indokkal).
+  Future<void> rescheduleLeg(String legKey, Map<String, dynamic> payload) async {
+    await _http.put('/api/v1/driver/legs/$legKey/planned-start', token: await _token(), body: payload);
+  }
+
   /// Címjavaslatok gépelés közben (TomTom, tartalékként OpenStreetMap) – csak hálózattal.
   Future<List<String>> suggestAddresses(String query) async {
     final raw = await _http.get('/api/v1/driver/geo/suggest', token: await _token(), query: {'q': query}) as List<dynamic>;

@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../models/models.dart';
+import '../../models/trip_rules.dart';
 import '../../services/app_services.dart';
+import '../theme.dart';
 import 'calendar_screen.dart';
 import 'leg_detail_screen.dart';
 import 'new_order_screen.dart';
@@ -30,10 +33,27 @@ class _HomeScreenState extends State<HomeScreen> {
   final _todayKey = GlobalKey<TodayScreenState>();
   final _calendarKey = GlobalKey<CalendarScreenState>();
   final _searchKey = GlobalKey<SearchScreenState>();
+  /// Az út, amelyikkel a sofőr éppen úton van: minden fülön egy koppintásra nyílik.
+  DriverLeg? _running;
+
+  Future<void> _loadRunning() async {
+    final running = runningLeg(await widget.services.local.cachedLegs());
+    if (!mounted) return;
+    if (running?.legKey != _running?.legKey || running?.toPlace != _running?.toPlace) setState(() => _running = running);
+  }
+
+  void _openRunning() {
+    final leg = _running;
+    if (leg == null) return;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey)));
+  }
 
   @override
   void initState() {
     super.initState();
+    widget.services.work.addListener(_loadRunning);
+    widget.services.sync.addListener(_loadRunning);
+    _loadRunning();
     final push = widget.services.push;
     push.openLeg.addListener(_openFromPush);
     push.foregroundMessage.addListener(_showForeground);
@@ -47,6 +67,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    widget.services.work.removeListener(_loadRunning);
+    widget.services.sync.removeListener(_loadRunning);
     widget.services.push.openLeg.removeListener(_openFromPush);
     widget.services.push.foregroundMessage.removeListener(_showForeground);
     super.dispose();
@@ -146,7 +168,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(index: _index, children: pages),
+      body: Column(children: [
+        // A „Ma” fülön a nagy kártya maga a futó út; a többi fülön ez a sáv viszi oda.
+        if (_running != null && _index != 0) _RunningBar(leg: _running!, onTap: _openRunning),
+        Expanded(child: IndexedStack(index: _index, children: pages)),
+      ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) {
@@ -163,4 +189,32 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+/// „Úton vagy: ABC-123 → Cél” – koppintásra megnyílik a futó fuvar.
+class _RunningBar extends StatelessWidget {
+  const _RunningBar({required this.leg, required this.onTap});
+  final DriverLeg leg;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: AppColors.signalBlue,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(children: [
+              const Icon(Icons.directions_car, color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Úton: ${leg.registrationNumber} → ${leg.toPlace}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+              ),
+              const Text('Megnyitás', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              const Icon(Icons.chevron_right, color: Colors.white),
+            ]),
+          ),
+        ),
+      );
 }

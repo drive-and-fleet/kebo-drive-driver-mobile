@@ -30,6 +30,14 @@ bool isInspectionClosed(ApiException e) {
   return e.message.contains('inspection closed');
 }
 
+/// Az indítást a szerver visszautasította, mert egy másik út még fut nála (a
+/// lezárása még nem ért fel). Ez nem végleges ütközés: az előző út lezárása után
+/// magától sikerül, ezért sima hibaként, backoff-fal újrapróbálódik.
+bool waitsForOtherLeg(ApiException e) {
+  final body = e.body;
+  return e.statusCode == 409 && body is Map && body['code'] == 'OTHER_LEG_IN_PROGRESS';
+}
+
 /// A saveValues payload: csak a jegyzőkönyv fázisába tartozó mezők (ha a form
 /// ismert), és üres értéket nem küld — mindkettőt véglegesen elutasítaná a
 /// szerver, és a teljes feltöltés elakadna.
@@ -155,6 +163,9 @@ class SyncService extends ChangeNotifier {
             final changes = Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map);
             await api.updateLegVehicle(operation.entityId, {for (final e in changes.entries) e.key: e.value?.toString()});
             break;
+          case 'RESCHEDULE_LEG':
+            await api.rescheduleLeg(operation.entityId, Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map));
+            break;
           case 'CORRECT_INSPECTION':
             await _correctInspection(operation.entityId, Map<String, dynamic>.from(jsonDecode(operation.payload ?? '{}') as Map));
             break;
@@ -176,7 +187,7 @@ class SyncService extends ChangeNotifier {
       } on ApiException catch (e) {
         blocked.add(leg);
         log.warn('sync', '${e.isConflict ? 'Ütközés' : 'Hiba'}: $what — HTTP ${e.statusCode}', e.message);
-        await local.operationError(operation.id, e.message, conflict: e.isConflict);
+        await local.operationError(operation.id, e.message, conflict: e.isConflict && !waitsForOtherLeg(e));
         if (e.statusCode == 0) break; // no network: keep the remaining queue untouched
       } catch (e, stack) {
         blocked.add(leg);

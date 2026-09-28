@@ -122,10 +122,12 @@ class CalendarScreenState extends State<CalendarScreen> {
               ),
             ),
             const SizedBox(width: 8),
+            // A mai nap fuvarjai (és a naptár is visszaugrik a mai hétre / hónapra).
             OutlinedButton(
               onPressed: () {
                 setState(() => _anchor = DateTime.now());
                 _load();
+                _openDay(_day(DateTime.now()));
               },
               child: const Text('Ma'),
             ),

@@ -3,15 +3,17 @@ import 'package:flutter/material.dart';
 import '../../logging/app_log.dart';
 import '../../models/local_models.dart';
 import '../../models/models.dart';
+import '../../models/trip_rules.dart';
 import '../../services/app_services.dart';
 import '../leg_flow.dart';
 import '../theme.dart';
 import '../widgets/leg_card.dart';
 import 'leg_detail_screen.dart';
 
-/// „Ma”: fent az a fuvar, amelyben a sofőr most van (vagy a következő), egyetlen
-/// nagy gombbal a teendőhöz; felette a neki szóló átadási kérések; alatta a mai
-/// többi fuvar. Minden kártyára koppintva a fuvar adatlapja nyílik.
+/// „Ma”: fent az a fuvar, amelyikkel a sofőr úton van – ha nincs ilyen, a mai
+/// legkorábbi, még át nem vett fuvar (a lekésett is) –, egyetlen nagy gombbal a
+/// teendőhöz; alatta a mára hátralévő többi fuvar. Későbbi napra tervezett fuvar
+/// itt nincs (az az Előjegyzésben van); ha mára nincs több, a következő látszik.
 class TodayScreen extends StatefulWidget {
   const TodayScreen({super.key, required this.services, required this.onBrowseFree});
   final AppServices services;
@@ -89,28 +91,6 @@ class TodayScreenState extends State<TodayScreen> {
     }
   }
 
-  static int _byStart(DriverLeg a, DriverLeg b) {
-    final x = a.plannedStart, y = b.plannedStart;
-    if (x == null && y == null) return 0;
-    if (x == null) return 1;
-    if (y == null) return -1;
-    return x.compareTo(y);
-  }
-
-  static bool _isToday(DateTime? t) {
-    if (t == null) return false;
-    final l = t.toLocal(), n = DateTime.now();
-    return l.year == n.year && l.month == n.month && l.day == n.day;
-  }
-
-  /// A folyamatban lévő út; ha nincs, a legkorábbi kiosztott (a lekésett is).
-  DriverLeg? get _current {
-    final running = _legs.where((l) => l.status == 'IN_PROGRESS').toList()..sort(_byStart);
-    if (running.isNotEmpty) return running.first;
-    final next = _legs.where((l) => l.status == 'ASSIGNED').toList()..sort(_byStart);
-    return next.isEmpty ? null : next.first;
-  }
-
   Future<void> _open(DriverLeg leg) async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey)));
     await _reload();
@@ -133,12 +113,11 @@ class TodayScreenState extends State<TodayScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final current = _current;
-    final rest = _legs
-        .where((l) => l.legKey != current?.legKey && const {'ASSIGNED', 'IN_PROGRESS'}.contains(l.status) && (_isToday(l.plannedStart) || l.plannedStart == null))
-        .toList()
-      ..sort(_byStart);
-    final done = _legs.where((l) => const {'COMPLETED', 'COMPLETED_PENDING_SYNC'}.contains(l.status) && _isToday(l.plannedStart)).toList()..sort(_byStart);
+    final now = DateTime.now();
+    final today = todaysWork(_legs, now);
+    final current = today.isEmpty ? null : today.first;
+    final rest = today.skip(1).toList();
+    final later = today.isEmpty ? nextLaterTrip(_legs, now) : null;
     return RefreshIndicator(
       onRefresh: refresh,
       child: ListView(
@@ -148,22 +127,19 @@ class TodayScreenState extends State<TodayScreen> {
           for (final request in _requests) _TransferRequest(request: request, onAnswer: (accept) => _answer(request, accept)),
           if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
           if (current == null)
-            _Empty(onBrowseFree: widget.onBrowseFree)
+            _Empty(onBrowseFree: widget.onBrowseFree, next: later, onOpenNext: later == null ? null : () => _open(later))
           else
             _CurrentTrip(
               leg: current,
+              overdue: isOverdue(current, now),
               syncState: _syncStates[current.legKey],
               busy: _busy,
               onOpen: () => _open(current),
               onAct: () => _act(current),
             ),
           if (rest.isNotEmpty) ...[
-            const _Heading('Ma még'),
+            _Heading('Utána még ma (${rest.length})'),
             for (final leg in rest) LegCard(leg: leg, syncState: _syncStates[leg.legKey], onTap: () => _open(leg)),
-          ],
-          if (done.isNotEmpty) ...[
-            _Heading('Ma kész (${done.length})'),
-            for (final leg in done) LegCard(leg: leg, syncState: _syncStates[leg.legKey], onTap: () => _open(leg)),
           ],
         ],
       ),
@@ -184,8 +160,9 @@ class _Heading extends StatelessWidget {
 
 /// A mostani fuvar: nagy, egyértelmű kártya, alatta a teendő egyetlen gombja.
 class _CurrentTrip extends StatelessWidget {
-  const _CurrentTrip({required this.leg, required this.syncState, required this.busy, required this.onOpen, required this.onAct});
+  const _CurrentTrip({required this.leg, required this.overdue, required this.syncState, required this.busy, required this.onOpen, required this.onAct});
   final DriverLeg leg;
+  final bool overdue;
   final LegSyncState? syncState;
   final bool busy;
   final VoidCallback onOpen;
@@ -194,7 +171,7 @@ class _CurrentTrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final running = leg.status == 'IN_PROGRESS';
-    final strip = running ? AppColors.signalBlue : AppColors.panel800;
+    final strip = running ? AppColors.signalBlue : overdue ? AppColors.signalAmber : AppColors.panel800;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Material(
         color: AppColors.sheet000,
@@ -207,7 +184,7 @@ class _CurrentTrip extends StatelessWidget {
               color: strip,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               child: Row(children: [
-                Text(running ? 'ÚTON' : 'KÖVETKEZŐ FUVAR',
+                Text(running ? 'ÚTON' : overdue ? 'LEKÉSETT – MÉG NEM VETTED ÁT' : 'KÖVETKEZŐ FUVAROD',
                     style: const TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, letterSpacing: 0.8, color: Colors.white, fontSize: 16)),
                 const Spacer(),
                 if (leg.plannedStart != null) Text(shortTime(leg.plannedStart), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
@@ -300,8 +277,10 @@ class _TransferRequest extends StatelessWidget {
 }
 
 class _Empty extends StatelessWidget {
-  const _Empty({required this.onBrowseFree});
+  const _Empty({required this.onBrowseFree, required this.next, required this.onOpenNext});
   final VoidCallback onBrowseFree;
+  final DriverLeg? next;
+  final VoidCallback? onOpenNext;
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +289,19 @@ class _Empty extends StatelessWidget {
       child: Column(children: [
         const Icon(Icons.local_taxi_outlined, size: 64, color: AppColors.ink600),
         const SizedBox(height: 12),
-        const Text('Most nincs fuvarod.', textAlign: TextAlign.center, style: TextStyle(fontSize: AppText.body)),
+        const Text('Mára nincs több fuvarod.', textAlign: TextAlign.center, style: TextStyle(fontSize: AppText.body)),
+        if (next != null) ...[
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.event),
+              title: Text('Következő: ${shortTime(next!.plannedStart)}'),
+              subtitle: Text('${next!.registrationNumber} · ${next!.fromPlace}'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: onOpenNext,
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         FilledButton.icon(onPressed: onBrowseFree, icon: const Icon(Icons.playlist_add_check), label: const Text('Szabad fuvarok')),
       ]),
