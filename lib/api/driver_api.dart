@@ -59,6 +59,12 @@ class DriverApi {
     await _http.post('/api/v1/driver/legs/$legKey/claim', token: await _token());
   }
 
+  /// Címjavaslatok gépelés közben (TomTom, tartalékként OpenStreetMap) – csak hálózattal.
+  Future<List<String>> suggestAddresses(String query) async {
+    final raw = await _http.get('/api/v1/driver/geo/suggest', token: await _token(), query: {'q': query}) as List<dynamic>;
+    return raw.map((e) => '${(e as Map)['label']}').where((label) => label.trim().isNotEmpty).toList();
+  }
+
   /// „Leadom”: a sofőr leveszi magáról a még el nem indított utat (az indok nem kötelező).
   Future<void> release(String legKey, {String? reason}) async {
     await _http.post('/api/v1/driver/legs/$legKey/release', token: await _token(), body: {

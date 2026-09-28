@@ -68,7 +68,8 @@ class LocalRepository {
   /// sync művelet viszi fel — csak a ténylegesen módosított mezőket, hogy az iroda
   /// közbeni módosítását ne írja felül. Több módosítás egy műveletbe olvad.
   /// Visszaadja, hogy volt-e változás.
-  Future<bool> updateLegVehicle(String legKey, {String? registrationNumber, String? userEmail, String? extraEmail}) async {
+  Future<bool> updateLegVehicle(String legKey,
+      {String? registrationNumber, String? userEmail, String? extraEmail, String? make, String? model, String? color, String? userName, String? userPhone}) async {
     final db = await _db;
     return db.transaction((txn) async {
       final rows = await txn.query('cached_leg', where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
@@ -92,6 +93,19 @@ class LocalRepository {
       if (extraEmail != null && clean(extraEmail) != clean(current['vehicle_extra_email']?.toString())) {
         changes['extraEmail'] = clean(extraEmail);
         column['vehicle_extra_email'] = clean(extraEmail) ?? '';
+      }
+      // Szöveges mezők (kis-nagybetű marad): típus, szín, a használó neve és telefonja.
+      String? text(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
+      for (final (key, value, col) in [
+        ('make', make, 'make'),
+        ('model', model, 'model'),
+        ('color', color, 'color'),
+        ('userName', userName, 'vehicle_user_name'),
+        ('userPhone', userPhone, 'vehicle_user_phone'),
+      ]) {
+        if (value == null || text(value) == text(current[col]?.toString())) continue;
+        changes[key] = text(value);
+        column[col] = text(value) ?? '';
       }
       if (changes.isEmpty) return false;
 
@@ -979,6 +993,30 @@ class LocalRepository {
       }
       await txn.update('local_inspection', {'updated_at': DateTime.now().toUtc().toIso8601String()}, where: 'local_id = ?', whereArgs: [localId]);
     }
+  }
+
+  /// „Üresen kezdem”: a még le nem zárt (így fel sem töltött) piszkozat minden adata
+  /// törlődik – a másolt is –, hogy üres jegyzőkönyv indulhasson. A fotó- és
+  /// aláírásfájlok útvonalát adja vissza (a hívó törli őket).
+  Future<List<String>> discardDraft(String localId) async {
+    final db = await _db;
+    return db.transaction((txn) async {
+      await _assertDraft(txn, localId);
+      final queued = await txn.query('sync_operation', where: 'entity_id = ?', whereArgs: [localId], limit: 1);
+      if (queued.isNotEmpty) throw StateError('Ez a jegyzőkönyv már feltöltésre vár, nem kezdhető újra.');
+      final paths = <String>[
+        // A másolt (örökölt) fotó fájlja az előző jegyzőkönyvé: az marad.
+        for (final row in await txn.query('local_photo', columns: ['local_path'], where: 'inspection_local_id = ? AND baseline = 0', whereArgs: [localId]))
+          if (row['local_path'] != null) '${row['local_path']}',
+        for (final row in await txn.query('local_signature', columns: ['local_path'], where: 'inspection_local_id = ?', whereArgs: [localId]))
+          if (row['local_path'] != null) '${row['local_path']}',
+      ];
+      for (final table in ['local_inspection_value_option', 'local_inspection_value', 'local_photo', 'local_signature', 'local_damage']) {
+        await txn.delete(table, where: 'inspection_local_id = ?', whereArgs: [localId]);
+      }
+      await txn.delete('local_inspection', where: 'local_id = ?', whereArgs: [localId]);
+      return paths;
+    });
   }
 
   /// Vár-e még feltöltésre javítás ennél a jegyzőkönyvnél (a szerkesztő ezt jelzi).

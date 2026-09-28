@@ -149,8 +149,11 @@ class WorkService extends ChangeNotifier {
 
   /// A sofőr javítja az út autójának adatait (rendszám, használó e-mail, további cím).
   /// Azonnal a telefonon, a szerverre a szinkron viszi (csak a módosított mezőket).
-  Future<bool> updateLegVehicle(DriverLeg leg, {String? registrationNumber, String? userEmail, String? extraEmail}) async {
-    final changed = await local.updateLegVehicle(leg.legKey, registrationNumber: registrationNumber, userEmail: userEmail, extraEmail: extraEmail);
+  Future<bool> updateLegVehicle(DriverLeg leg,
+      {String? registrationNumber, String? userEmail, String? extraEmail, String? make, String? model, String? color, String? userName, String? userPhone}) async {
+    final changed = await local.updateLegVehicle(leg.legKey,
+        registrationNumber: registrationNumber, userEmail: userEmail, extraEmail: extraEmail,
+        make: make, model: model, color: color, userName: userName, userPhone: userPhone);
     if (changed) {
       log.info('work', 'Autó adatai módosítva a telefonon: ${leg.legKey} (szinkronra vár)');
       notifyListeners();
@@ -286,17 +289,21 @@ class WorkService extends ChangeNotifier {
   /// lokális tranzakció, a hálózat nincs a kritikus úton. A szinkron a
   /// háttérben indul; az állapotát a SyncService jelzi a felületnek.
   /// Visszaadja az út új lokális státuszát.
-  Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form) async {
+  /// [onStep] a képernyőnek mondja, hol tart a lezárás (a sofőr lássa, hogy halad).
+  Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form, {void Function(String step)? onStep}) async {
+    onStep?.call('Adatok ellenőrzése…');
     final result = await InspectionValidator(local).validate(draft, form);
     if (!result.valid) {
       log.warn('insp', 'Lezárás elutasítva: ${draft.inspectionType} ${draft.localId}', result.errors.join('; '));
       throw StateError(result.errors.join('\n'));
     }
     // Hol volt a telefon a lezáráskor (ha van helyengedély): a szerver ebből pótolja a pont nélküli megállót.
+    onStep?.call('Helyzet rögzítése…');
     final fix = await positionProvider?.call();
     if (fix != null) {
       await local.setInspectionCompletionPosition(draft.localId, latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy);
     }
+    onStep?.call('Mentés a telefonra…');
     final status = await local.completeInspectionAndTransition(draft.localId);
     log.info('insp', 'Jegyzőkönyv lezárva a telefonon: ${draft.inspectionType} ${draft.localId}, út ${draft.legKey} → $status');
     unawaited(sync.run());

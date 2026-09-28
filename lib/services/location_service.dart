@@ -256,8 +256,13 @@ class LocationService extends ChangeNotifier {
   Future<Fix?> currentFix() async {
     try {
       if (!await _permitted()) return null;
+      // Azonnal: az utolsó ismert helyzet, ha friss (a sofőr ne várjon a GPS-re).
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null && DateTime.now().difference(last.timestamp).inMinutes < 10) {
+        return (latitude: last.latitude, longitude: last.longitude, accuracy: last.accuracy);
+      }
       final p = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium, timeLimit: Duration(seconds: 8)),
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium, timeLimit: Duration(seconds: 3)),
       );
       return (latitude: p.latitude, longitude: p.longitude, accuracy: p.accuracy);
     } catch (e) {

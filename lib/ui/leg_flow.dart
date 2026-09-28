@@ -5,18 +5,11 @@ import '../logging/app_log.dart';
 import '../models/models.dart';
 import '../services/app_services.dart';
 import 'screens/inspection_editor_screen.dart';
-import 'screens/leg_detail_screen.dart';
 import 'theme.dart';
 
 /// A fuvar lépései egy helyen, hogy a „Most” képernyő és a fuvar adatlapja
 /// ugyanúgy működjön: jegyzőkönyv indítása közvetlenül (külön Jegyzőkönyv oldal
-/// nélkül), a lezárt jegyzőkönyv megtekintése, a körfuvar várakozása és a leadás.
-
-/// Van-e mit másolni ennek a fázisnak a jegyzőkönyvébe (az autó közvetlenül előző jegyzőkönyve).
-Future<bool> canCopyInto(AppServices services, DriverLeg leg, String phase) async {
-  if (await services.local.inspectionForLeg(leg.legKey, phase) != null) return false;
-  return await services.local.copySourceFor(leg, phase) != null;
-}
+/// nélkül), a lezárt jegyzőkönyv megtekintése és a fuvar leadása.
 
 /// Az út következő lépése: átvétel (ASSIGNED) vagy leadás (IN_PROGRESS).
 String? nextPhase(DriverLeg leg) => switch (leg.status) {
@@ -43,13 +36,8 @@ Future<void> runPhase(BuildContext context, AppServices services, DriverLeg leg,
     return;
   }
   if (!context.mounted) return;
+  // A leadás lezárása után a szerkesztő a „Kész” képernyőre vált (körfuvarnál ott a várakozás).
   await openInspection(context, services, leg, phase, copy: copy);
-  // Körfuvar: a leadás után a sofőr nem mehet el — megvárja az autót, és visszaviszi.
-  // Csak ha a visszaút is az övé: ha másnak osztották ki, neki nincs mire várnia.
-  if (phase == 'DROPOFF' && leg.isOutbound && await services.local.returnLegFor(leg) != null) {
-    final closed = await services.local.inspectionForLeg(leg.legKey, 'DROPOFF');
-    if (closed != null && closed.status != 'DRAFT' && context.mounted) await showWaitDialog(context, services, leg);
-  }
 }
 
 /// A fázis jegyzőkönyve: a meglévő (lezártnál csak megtekintés), vagy új.
@@ -92,35 +80,6 @@ String shortTime(DateTime? t) {
   final l = t.toLocal();
   String two(int v) => v.toString().padLeft(2, '0');
   return '${two(l.month)}.${two(l.day)}. ${two(l.hour)}:${two(l.minute)}';
-}
-
-Future<void> showWaitDialog(BuildContext context, AppServices services, DriverLeg outbound) async {
-  final back = await services.local.returnLegFor(outbound);
-  log.info('work', 'Körfuvar: várakozás a leadás után (${outbound.legKey}), visszaút: ${back?.legKey ?? 'nincs a sofőrnél'}');
-  if (!context.mounted) return;
-  final open = await showDialog<bool>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogContext) => AlertDialog(
-      icon: const Icon(Icons.hourglass_top, color: AppColors.signalAmber, size: 36),
-      title: const Text('Körfuvar – várakozás'),
-      content: Text(back == null
-          ? 'Ne menj el! Várd meg az autót itt: ${outbound.toAddress}.\n\nA visszaút még nincs kiosztva neked – szólj az irodának.'
-          : 'Ne menj el! Várd meg, amíg az autó elkészül itt: ${outbound.toAddress}.\n\n'
-              'Utána vidd vissza ide: ${back.toAddress}'
-              '${back.plannedStart == null ? '' : '\nTervezett visszaindulás: ${shortTime(back.plannedStart)}'}.'),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Rendben')),
-        if (back != null)
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Visszaút megnyitása')),
-      ],
-    ),
-  );
-  if (open == true && back != null && context.mounted) {
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => LegDetailScreen(services: services, legKey: back.legKey),
-    ));
-  }
 }
 
 /// Leadható-e az út a telefonról: kiosztott, még el nem indított, a szerveren is létező,

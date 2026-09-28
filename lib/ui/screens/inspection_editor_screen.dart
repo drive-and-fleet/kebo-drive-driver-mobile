@@ -11,6 +11,7 @@ import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../widgets/dynamic_field.dart';
 import '../../logging/app_log.dart';
+import 'done_screen.dart';
 
 // ponytail: fix lista, DB-lookup csak ha szolgálatonként eltérő értékkészlet kell.
 const _damageLocations = [
@@ -40,6 +41,8 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   LocalInspectionDraft? _draft;
   bool _loading = true;
   bool _finalizing = false;
+  /// Hol tart a lezárás (a teljes képernyős jelzőn látszik).
+  String _step = '';
 
   /// Lezárt jegyzőkönyv csak megtekinthető — kivéve a javítást: az utat vivő sofőr
   /// az út lezárásáig javíthatja az adatokat és a megjegyzést (előzményként megmarad).
@@ -362,6 +365,62 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     }
   }
 
+  /// „Üresen kezdem”: a másolt piszkozat törlődik, és egy üres jegyzőkönyv nyílik.
+  Future<void> _startEmpty() async {
+    final draft = _draft;
+    if (draft == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Üresen kezded?'),
+        content: const Text('A korábbi jegyzőkönyvből átvett adatok, sérülések és az eddig itt rögzített fotók törlődnek.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Üresen kezdem')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    _noteTimer?.cancel();
+    try {
+      final files = await widget.services.local.discardDraft(draft.localId);
+      for (final path in files) {
+        try {
+          await File(path).delete();
+        } catch (_) {
+          // A fájl már nincs meg: nincs teendő.
+        }
+      }
+      log.info('insp', 'Másolt piszkozat eldobva, üres jegyzőkönyv: ${draft.inspectionType} ${draft.localId}');
+      final fresh = await widget.services.work.openInspection(leg: widget.leg, phase: draft.inspectionType, formTypeId: widget.form.id);
+      if (!mounted) return;
+      await Navigator.of(context).pushReplacement(MaterialPageRoute(
+        builder: (_) => InspectionEditorScreen(services: widget.services, leg: widget.leg, draftId: fresh.localId, form: widget.form),
+      ));
+    } catch (e, stack) {
+      log.error('insp', 'Az üres jegyzőkönyv nem nyitható: ${draft.localId}', e, stack);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nem sikerült: $e')));
+    }
+  }
+
+  Future<void> _confirmFinalize() async {
+    final pickup = _draft?.inspectionType == 'PICKUP';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(pickup ? 'Átveszed az autót?' : 'Leadod az autót?'),
+        content: Text(pickup
+            ? 'A jegyzőkönyv lezárul, és a fuvar elindul.'
+            : 'A jegyzőkönyv lezárul, és a fuvar befejeződik.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(pickup ? 'Átvettem' : 'Leadtam')),
+        ],
+      ),
+    );
+    if (ok == true) await _finalize();
+  }
+
   Future<void> _finalize() async {
     final draft = _draft;
     if (draft == null) return;
@@ -370,19 +429,20 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       _noteTimer!.cancel();
       await _saveNote();
     }
-    setState(() => _finalizing = true);
+    setState(() { _finalizing = true; _step = 'Lezárás…'; });
     log.info('insp', 'Lezárás kérve: ${draft.inspectionType} ${draft.localId}');
     try {
-      final legStatus = await widget.services.work.finalizeInspection(draft, widget.form);
+      final legStatus = await widget.services.work.finalizeInspection(draft, widget.form,
+          onStep: (step) { if (mounted) setState(() => _step = step); });
       if (!mounted) return;
-      final what = switch (legStatus) {
-        'IN_PROGRESS' when draft.inspectionType == 'PICKUP' => 'Jegyzőkönyv lezárva, a fuvar elindult.',
-        'COMPLETED_PENDING_SYNC' => 'Jegyzőkönyv lezárva, a fuvar lezárva.',
-        _ => 'Jegyzőkönyv lezárva.',
-      };
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('$what Helyben mentve, a feltöltés a háttérben fut.'),
-      ));
+      // Leadás után a „Kész” képernyő: nem ugrik magától a következő fuvarra.
+      if (legStatus == 'COMPLETED_PENDING_SYNC' || draft.inspectionType == 'DROPOFF') {
+        final leg = await widget.services.local.cachedLeg(LocalRepository.currentLegKey(widget.leg.legKey)) ?? widget.leg;
+        if (!mounted) return;
+        await Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => DoneScreen(services: widget.services, leg: leg)));
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Autó átvéve, a fuvar elindult.')));
       // Elindult a fuvar: ha az iroda kéri, most kérjük a helyengedélyt (előtte elmagyarázzuk).
       if (legStatus == 'IN_PROGRESS' && draft.inspectionType == 'PICKUP') {
         await widget.services.location.askIfNeeded(context, widget.leg);
@@ -391,7 +451,7 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       // Sikeres lezárás után a képernyő zárva marad, amíg el nem tűnik.
       Navigator.pop(context);
     } catch (e) {
-      if (mounted) setState(() => _finalizing = false);
+      if (mounted) setState(() { _finalizing = false; _step = ''; });
       if (mounted) await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(title: const Text('A jegyzőkönyv még nem zárható le'), content: Text('$e'), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]),
@@ -404,12 +464,22 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     final phase = _draft?.inspectionType ?? '';
     final fields = widget.form.fields.where((f) => f.phase == 'BOTH' || f.phase == phase).toList();
     final requirements = widget.form.photoRequirements.where((p) => p.phase == 'BOTH' || p.phase == phase).toList();
-    return Scaffold(
+    final open = _draft?.status == 'DRAFT';
+    final copied = open && (_draft?.copyFromServerId != null || _draft?.copyFromLocalId != null);
+    final scaffold = Scaffold(
       appBar: AppBar(title: Text(phase == 'PICKUP' ? 'Átvételi jegyzőkönyv' : 'Leadási jegyzőkönyv')),
+      floatingActionButton: open && !_finalizing
+          ? FloatingActionButton.extended(
+              onPressed: _confirmFinalize,
+              icon: const Icon(Icons.check),
+              label: Text(phase == 'PICKUP' ? 'Átvettem – lezárás' : 'Leadtam – lezárás'),
+            )
+          : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              // Alul hely a lebegő gombnak, hogy az utolsó mezőt ne takarja.
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
               children: [
                 Card(child: ListTile(leading: const Icon(Icons.directions_car), title: Text(widget.leg.registrationNumber), subtitle: Text('${widget.leg.make ?? ''} ${widget.leg.model ?? ''}\n${widget.form.name}'))),
                 if (_draft != null && _draft!.status != 'DRAFT' && !_correcting)
@@ -431,8 +501,12 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                       subtitle: Text('Írd át a hibás adatokat, majd mentsd. Fotó, sérülés és szignó itt nem változik.'),
                     ),
                   ),
-                if (_draft?.copyFromServerId != null || _draft?.copyFromLocalId != null)
-                  const Card(child: ListTile(leading: Icon(Icons.copy_all), title: Text('Korábbi jegyzőkönyvből előtöltve'), subtitle: Text('Ellenőrizd az adatokat. Az aláírás nem lett átmásolva.'))),
+                if (copied)
+                  Card(child: ListTile(
+                    leading: const Icon(Icons.copy_all),
+                    title: const Text('Az előző jegyzőkönyvből kitöltve'),
+                    trailing: TextButton(onPressed: _finalizing ? null : _startEmpty, child: const Text('Üresen kezdem')),
+                  )),
                 const SizedBox(height: 12),
                 Text('Adatok', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
@@ -523,13 +597,27 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     )),
                   ]),
                 ],
-                if (_draft?.status == 'DRAFT') ...[
-                  FilledButton.icon(onPressed: _finalizing ? null : _finalize, icon: const Icon(Icons.check), label: const Text('Jegyzőkönyv lezárása')),
-                  if (_finalizing) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
-                ],
               ],
             ),
     );
+    if (!_finalizing) return scaffold;
+    // Lezárás közben: teljes képernyős jelző a lépéssel, hogy látszódjon, hogy halad.
+    return Stack(children: [
+      scaffold,
+      const ModalBarrier(dismissible: false, color: Color(0x88000000)),
+      Center(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(_step, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+      ),
+    ]);
   }
 }
 

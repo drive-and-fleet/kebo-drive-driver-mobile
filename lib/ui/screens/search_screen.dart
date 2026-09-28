@@ -4,6 +4,7 @@ import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
 import '../widgets/leg_card.dart';
+import 'leg_detail_screen.dart';
 import '../../logging/app_log.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -64,6 +65,10 @@ class SearchScreenState extends State<SearchScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _openDetail(DriverLeg leg) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey)));
   }
 
   Future<void> _loadBoard() async {
@@ -203,7 +208,8 @@ class SearchScreenState extends State<SearchScreen> {
                     style: TextStyle(color: AppColors.ink600, fontSize: AppText.secondary)),
               ),
             const SizedBox(height: 12),
-            for (final row in _open) LegCard(leg: row.leg, onTap: () {}, trailing: _boardTrailing(row)),
+            for (final row in _open)
+              LegCard(leg: row.leg, onTap: (row.mine || _claimed.contains(row.leg.legKey)) ? () => _openDetail(row.leg) : () {}, trailing: _boardTrailing(row)),
           ],
           if (!_board && !_loading && _message == null && _results.isEmpty)
             const Padding(
@@ -219,15 +225,17 @@ class SearchScreenState extends State<SearchScreen> {
           for (final leg in _results)
             LegCard(
               leg: leg,
-              onTap: () {},
+              // A felvett fuvar innen is megnyílik (és indítható); a még szabad nem a sofőré.
+              onTap: _claimed.contains(leg.legKey) ? () => _openDetail(leg) : () {},
               showStatus: false,
               // Az utak sorban mennek: az előző út teljesülése előtt ez nem vehető fel.
               trailing: _claimed.contains(leg.legKey)
-                  ? const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.check_circle, color: AppColors.signalGreen),
-                      SizedBox(width: 6),
-                      Text('Felvetted', style: TextStyle(color: AppColors.signalGreen, fontWeight: FontWeight.w700)),
-                    ])
+                  ? FilledButton.icon(
+                      onPressed: () => _openDetail(leg),
+                      style: FilledButton.styleFrom(backgroundColor: AppColors.signalGreen),
+                      icon: const Icon(Icons.check_circle),
+                      label: const Text('Felvetted – megnyitás'),
+                    )
                   : leg.waitsForPreviousLeg
                   ? const Flexible(
                       child: Text('Előbb az előző útnak kell teljesülnie',

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../logging/app_log.dart';
 import '../../services/app_services.dart';
+import '../widgets/address_input.dart';
 import '../theme.dart';
 
 /// Új fuvar a sofőrtől, egyszerűsítve: egy autó, honnan → hova, egy út, rögtön a
@@ -255,7 +256,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                   _field(_extraEmail, 'További e-mail a jegyzőkönyvekhez', validator: _email, keyboard: TextInputType.emailAddress),
                   _section('Honnan (felvétel)'),
                   _field(_pickupCompany, 'Cégnév'),
-                  _field(_pickupAddress, 'Cím *', validator: _required),
+                  AddressInput(controller: _pickupAddress, label: 'Cím *', validator: _required, suggest: widget.services.api.suggestAddresses),
                   _field(_pickupContact, 'Kapcsolattartó'),
                   _field(_pickupPhone, 'Telefon', keyboard: TextInputType.phone),
                   ListTile(
@@ -270,7 +271,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                   ),
                   _section('Hova (leadás)'),
                   _field(_dropoffCompany, 'Cégnév'),
-                  _field(_dropoffAddress, 'Cím *', validator: _required),
+                  AddressInput(controller: _dropoffAddress, label: 'Cím *', validator: _required, suggest: widget.services.api.suggestAddresses),
                   _field(_dropoffContact, 'Kapcsolattartó'),
                   _field(_dropoffPhone, 'Telefon', keyboard: TextInputType.phone),
                   ListTile(
