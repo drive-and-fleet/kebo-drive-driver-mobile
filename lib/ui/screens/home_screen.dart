@@ -22,6 +22,9 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.services});
   final AppServices services;
 
+  /// Egy másik képernyő kéri, hogy a kezdőképernyő ezt a fület mutassa (pl. lezárás után a Ma).
+  static final ValueNotifier<int?> tabRequest = ValueNotifier<int?>(null);
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -35,6 +38,15 @@ class _HomeScreenState extends State<HomeScreen> {
   final _searchKey = GlobalKey<SearchScreenState>();
   /// Az út, amelyikkel a sofőr éppen úton van: minden fülön egy koppintásra nyílik.
   DriverLeg? _running;
+
+  void _onTabRequest() {
+    final tab = HomeScreen.tabRequest.value;
+    if (tab == null || !mounted) return;
+    HomeScreen.tabRequest.value = null;
+    setState(() => _index = tab);
+    unawaited(_refreshCurrentTab());
+    unawaited(_searchKey.currentState?.refresh());
+  }
 
   Future<void> _loadRunning() async {
     final running = runningLeg(await widget.services.local.cachedLegs());
@@ -53,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     widget.services.work.addListener(_loadRunning);
     widget.services.sync.addListener(_loadRunning);
+    HomeScreen.tabRequest.addListener(_onTabRequest);
     _loadRunning();
     final push = widget.services.push;
     push.openLeg.addListener(_openFromPush);
@@ -69,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     widget.services.work.removeListener(_loadRunning);
     widget.services.sync.removeListener(_loadRunning);
+    HomeScreen.tabRequest.removeListener(_onTabRequest);
     widget.services.push.openLeg.removeListener(_openFromPush);
     widget.services.push.foregroundMessage.removeListener(_showForeground);
     super.dispose();

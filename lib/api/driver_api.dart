@@ -52,6 +52,12 @@ class DriverApi {
     return '${result['id']}';
   }
 
+  /// Egy út lezárt jegyzőkönyvei, csak olvasásra (a teljesített út jegyzőkönyve már nincs a telefonon).
+  Future<List<Map<String, dynamic>>> legInspections(String legKey) async =>
+      ((await _http.get('/api/v1/driver/legs/$legKey/inspections', token: await _token())) as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
   Future<List<dynamic>> previousInspections(String legKey) async =>
       (await _http.get('/api/v1/driver/legs/$legKey/previous-inspections', token: await _token())) as List<dynamic>;
 

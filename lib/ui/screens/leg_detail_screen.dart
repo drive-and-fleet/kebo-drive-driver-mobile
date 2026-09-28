@@ -8,6 +8,7 @@ import '../../services/app_services.dart';
 import '../leg_flow.dart';
 import '../theme.dart';
 import '../widgets/sync_badge.dart';
+import 'remote_inspection_screen.dart';
 import 'transfer_create_screen.dart';
 
 /// Egy fuvar: fent hová és kihez, alul egyetlen nagy gomb a teendővel (átvétel /
@@ -86,15 +87,37 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     }
   }
 
+  /// A jegyzőkönyv: ha a telefonon van, onnan (az út lezárásáig a rögzítő javíthatja);
+  /// ha nincs (pl. régebben teljesített út), a szerverről, csak megtekintésre.
   Future<void> _view(String phase) async {
     final leg = _leg;
     if (leg == null) return;
+    final local = phase == 'PICKUP' ? _pickupExists : _dropoffExists;
     try {
-      await openInspection(context, widget.services, leg, phase);
+      if (local || LocalRepository.isLocalLeg(leg.legKey)) {
+        await openInspection(context, widget.services, leg, phase);
+        return;
+      }
+      setState(() => _busy = true);
+      final all = await widget.services.api.legInspections(leg.legKey);
+      final found = all.where((i) => i['inspectionType'] == phase).toList();
+      if (!mounted) return;
+      if (found.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Ehhez az úthoz nincs lezárt ${phase == 'PICKUP' ? 'átvételi' : 'leadási'} jegyzőkönyv.'),
+        ));
+        return;
+      }
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => RemoteInspectionScreen(inspection: found.last, plate: leg.registrationNumber),
+      ));
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      log.warn('ui', 'A jegyzőkönyv nem nyitható meg: ${leg.legKey} $phase', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('A jegyzőkönyv nem tölthető be (internet kell hozzá): $e')));
+      }
     } finally {
-      await _load(quiet: true);
+      await _load();
     }
   }
 
@@ -194,6 +217,23 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     }
   }
 
+  /// A jobb felső menü pontjai (ha nincs egy sem, a menü nem jelenik meg).
+  List<PopupMenuEntry<String>> _menuItems(DriverLeg leg) => [
+    if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status))
+      const PopupMenuItem(value: 'vehicle', child: ListTile(leading: Icon(Icons.edit), title: Text('Autó adatai'))),
+    if (leg.status == 'ASSIGNED')
+      const PopupMenuItem(value: 'time', child: ListTile(leading: Icon(Icons.schedule), title: Text('Felvétel időpontja'))),
+    // Az elindult / teljesített út jegyzőkönyve akkor is megnézhető, ha már nincs a telefonon.
+    if (_pickupExists || const {'IN_PROGRESS', 'COMPLETED_PENDING_SYNC', 'COMPLETED'}.contains(leg.status))
+      const PopupMenuItem(value: 'pickup', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Átvételi jegyzőkönyv'))),
+    if (_dropoffExists || const {'COMPLETED_PENDING_SYNC', 'COMPLETED'}.contains(leg.status))
+      const PopupMenuItem(value: 'dropoff', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Leadási jegyzőkönyv'))),
+    if (leg.status == 'ASSIGNED' && !LocalRepository.isLocalLeg(leg.legKey))
+      const PopupMenuItem(value: 'transfer', child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Átadás másik sofőrnek'))),
+    if (_releasable)
+      const PopupMenuItem(value: 'release', child: ListTile(leading: Icon(Icons.logout, color: AppColors.signalRed), title: Text('Leadom ezt a fuvart'))),
+      ];
+
   @override
   Widget build(BuildContext context) {
     final leg = _leg;
@@ -202,21 +242,10 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
       appBar: AppBar(
         title: Text(leg?.registrationNumber ?? 'Fuvar'),
         actions: [
-          if (leg != null)
+          if (leg != null && _menuItems(leg).isNotEmpty)
             PopupMenuButton<String>(
               onSelected: _menu,
-              itemBuilder: (_) => [
-                if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status))
-                  const PopupMenuItem(value: 'vehicle', child: ListTile(leading: Icon(Icons.edit), title: Text('Autó adatai'))),
-                if (leg.status == 'ASSIGNED')
-                  const PopupMenuItem(value: 'time', child: ListTile(leading: Icon(Icons.schedule), title: Text('Felvétel időpontja'))),
-                if (_pickupExists) const PopupMenuItem(value: 'pickup', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Átvételi jegyzőkönyv'))),
-                if (_dropoffExists) const PopupMenuItem(value: 'dropoff', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Leadási jegyzőkönyv'))),
-                if (leg.status == 'ASSIGNED' && !LocalRepository.isLocalLeg(leg.legKey))
-                  const PopupMenuItem(value: 'transfer', child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Átadás másik sofőrnek'))),
-                if (_releasable)
-                  const PopupMenuItem(value: 'release', child: ListTile(leading: Icon(Icons.logout, color: AppColors.signalRed), title: Text('Leadom ezt a fuvart'))),
-              ],
+              itemBuilder: (_) => _menuItems(leg),
             ),
         ],
       ),

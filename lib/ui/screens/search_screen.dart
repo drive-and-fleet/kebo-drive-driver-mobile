@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
@@ -38,13 +40,25 @@ class SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     log.info('ui', 'Képernyő: Szabad fuvarok');
+    widget.services.work.addListener(_workChanged);
     _load();
   }
 
   @override
   void dispose() {
+    widget.services.work.removeListener(_workChanged);
+    _reloadTimer?.cancel();
     _plate.dispose();
     super.dispose();
+  }
+
+  /// Egy fuvar állapota változott (elindult, lezárult, felvetted): a lista magától frissül.
+  Timer? _reloadTimer;
+  void _workChanged() {
+    _reloadTimer?.cancel();
+    _reloadTimer = Timer(const Duration(milliseconds: 800), () {
+      if (mounted && !_busy) _load();
+    });
   }
 
   Future<void> _load() async {
@@ -141,7 +155,8 @@ class SearchScreenState extends State<SearchScreen> {
 
   Widget _freeCard(DriverLeg leg, {Color? color}) => LegCard(
         leg: leg,
-        color: color,
+        color: _mineColor(leg, _claimed.contains(leg.legKey)) ?? color,
+        borderColor: _mineBorder(leg, _claimed.contains(leg.legKey)),
         // A felvett fuvar innen is megnyílik (és indítható); a még szabad nem a sofőré.
         onTap: _claimed.contains(leg.legKey) ? () => _openDetail(leg) : () {},
         showStatus: false,
@@ -161,9 +176,21 @@ class SearchScreenState extends State<SearchScreen> {
                 : FilledButton(onPressed: _busy ? null : () => _claim(leg), child: const Text('Felveszem')),
       );
 
+  /// A sofőr saját fuvarjai színnel: amivel éppen úton van piros, ami rá van osztva zöld.
+  Color? _mineColor(DriverLeg leg, bool mine) {
+    if (!mine) return null;
+    return leg.status == 'IN_PROGRESS' ? AppColors.tintRed : AppColors.tintGreen;
+  }
+
+  Color? _mineBorder(DriverLeg leg, bool mine) {
+    if (!mine) return null;
+    return leg.status == 'IN_PROGRESS' ? AppColors.signalRed : AppColors.signalGreen;
+  }
+
   Widget _boardCard(OpenLeg row, {Color? color}) => LegCard(
         leg: row.leg,
-        color: color,
+        color: _mineColor(row.leg, row.mine || _claimed.contains(row.leg.legKey)) ?? color,
+        borderColor: _mineBorder(row.leg, row.mine || _claimed.contains(row.leg.legKey)),
         onTap: (row.mine || _claimed.contains(row.leg.legKey)) ? () => _openDetail(row.leg) : () {},
         trailing: _boardTrailing(row),
       );
@@ -248,6 +275,7 @@ class SearchScreenState extends State<SearchScreen> {
               },
             ),
           ),
+          const _ColorLegend(),
           if (_loading) const Padding(padding: EdgeInsets.only(top: 16), child: LinearProgressIndicator()),
           if (_message != null)
             Padding(
@@ -317,5 +345,27 @@ class _AssignChip extends StatelessWidget {
         child: Text(text,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, fontSize: 14, color: filled ? Colors.white : color)),
+      );
+}
+
+/// A kártyák színeinek magyarázata a lista tetején.
+class _ColorLegend extends StatelessWidget {
+  const _ColorLegend();
+
+  static Widget _item(Color fill, Color border, String text) => Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(width: 18, height: 18, decoration: BoxDecoration(color: fill, border: Border.all(color: border, width: 1.5), borderRadius: BorderRadius.circular(4))),
+        const SizedBox(width: 6),
+        Text(text, style: const TextStyle(fontSize: 13, color: AppColors.ink900)),
+      ]);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Wrap(spacing: 14, runSpacing: 8, children: [
+          _item(AppColors.tintRed, AppColors.signalRed, 'Éppen úton vagy vele'),
+          _item(AppColors.tintGreen, AppColors.signalGreen, 'Rád van osztva'),
+          _item(AppColors.sheet000, AppColors.ruleFirm, 'Mai, nem a tiéd'),
+          _item(AppColors.sheet100, AppColors.ruleFirm, 'Nem mai, nem a tiéd'),
+        ]),
       );
 }

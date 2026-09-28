@@ -7,6 +7,7 @@ import '../../services/app_services.dart';
 import '../leg_flow.dart';
 import '../theme.dart';
 import '../widgets/sync_badge.dart';
+import 'home_screen.dart';
 import 'leg_detail_screen.dart';
 
 /// A leadás után: a fuvar kész. Megmutatja, mi zárult le és hogy a feltöltés hol
@@ -45,13 +46,23 @@ class _DoneScreenState extends State<DoneScreen> {
     if (mounted) setState(() { _sync = state; _returnLeg = back; });
   }
 
-  void _home() => Navigator.of(context).popUntil((route) => route.isFirst);
+  /// Vissza a Ma fülre (akárhonnan nyitotta a fuvart), friss listákkal.
+  void _home() {
+    HomeScreen.tabRequest.value = 0;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
 
   @override
   Widget build(BuildContext context) {
     final leg = widget.leg;
     final back = _returnLeg;
-    return Scaffold(
+    // A telefon vissza gombja is a Ma fülre visz (nem a lezárt fuvar képernyőire).
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _home();
+      },
+      child: Scaffold(
       appBar: AppBar(automaticallyImplyLeading: false, title: const Text('Fuvar lezárva')),
       body: ListView(
         padding: const EdgeInsets.all(20),
@@ -93,6 +104,7 @@ class _DoneScreenState extends State<DoneScreen> {
           ),
         ],
       ),
+    ),
     );
   }
 }
