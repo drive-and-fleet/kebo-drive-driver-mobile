@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
+import '../../models/trip_rules.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
 import '../widgets/leg_card.dart';
@@ -20,6 +21,7 @@ class SearchScreenState extends State<SearchScreen> {
   /// A home_screen AppBar explicit frissítés gombja hívja.
   Future<void> refresh() => _load();
   final _plate = TextEditingController();
+  /// A szerverről letöltött teljes lista; a rendszám-szűrő gépelés közben ebből szűr.
   List<DriverLeg> _results = const [];
   bool _loading = true;
   bool _busy = false;
@@ -47,10 +49,10 @@ class SearchScreenState extends State<SearchScreen> {
 
   Future<void> _load() async {
     if (_board) return _loadBoard();
-    log.info('work', 'Szabad fuvarok lekérése${_plate.text.trim().isEmpty ? '' : ' (rendszám: ${_plate.text.trim()})'}');
+    log.info('work', 'Szabad fuvarok lekérése');
     setState(() { _loading = true; _message = null; });
     try {
-      final results = await widget.services.work.availableLegs(plate: _plate.text.trim());
+      final results = await widget.services.work.availableLegs(plate: '');
       log.info('work', 'Szabad fuvarok: ${results.length}');
       // Egy autó útjai egymás után (körfuvarnál az odaút elöl), az autók indulás szerint.
       final grouped = groupByVehicle(results, (a, b) {
@@ -74,10 +76,8 @@ class SearchScreenState extends State<SearchScreen> {
   Future<void> _loadBoard() async {
     setState(() { _loading = true; _message = null; });
     try {
-      final plate = _plate.text.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
       final rows = await widget.services.work.openLegs();
-      final shown = plate.isEmpty ? rows : rows.where((r) => r.leg.registrationNumber.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '').contains(plate)).toList();
-      if (mounted) setState(() => _open = shown);
+      if (mounted) setState(() => _open = rows);
     } catch (e) {
       log.warn('work', 'A nyitott fuvarok nem töltődtek be', e);
       if (mounted) setState(() => _message = 'A nyitott fuvarok listája internetkapcsolatot igényel. $e');
@@ -116,25 +116,73 @@ class SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  /// A nyitott fuvar sora: jól látható, hogy van-e már sofőrje (és kié), és mit tehetsz vele.
   Widget _boardTrailing(OpenLeg row) {
-    const muted = TextStyle(fontSize: 13, color: AppColors.ink600);
     if (_claimed.contains(row.leg.legKey) || row.mine) {
-      return const Text('A tiéd', style: TextStyle(color: AppColors.signalGreen, fontWeight: FontWeight.w700));
+      return const _AssignChip(text: 'A TIÉD', color: AppColors.signalGreen, filled: true);
     }
-    if (row.canTakeOver) {
-      // A kártya alsó sorában: a név rövidülhet, a gomb mindig teljes.
-      return Flexible(
-        child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-          Flexible(child: Text(row.driverName ?? '', style: muted, overflow: TextOverflow.ellipsis)),
-          const SizedBox(width: 8),
-          OutlinedButton(onPressed: _busy ? null : () => _takeOver(row), child: const Text('Átveszem')),
-        ]),
-      );
-    }
-    if (row.canClaim) return FilledButton(onPressed: _busy ? null : () => _claim(row.leg), child: const Text('Felveszem'));
+    final assigned = row.driverName != null;
     return Flexible(
-      child: Text(row.driverName == null ? 'Szabad' : 'Nála: ${row.driverName}', textAlign: TextAlign.right, style: muted),
+      child: Wrap(alignment: WrapAlignment.end, crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, runSpacing: 6, children: [
+        assigned
+            ? _AssignChip(text: 'KIOSZTVA: ${row.driverName}', color: AppColors.signalBlue)
+            : const _AssignChip(text: 'NINCS SOFŐRJE', color: AppColors.signalAmber),
+        if (row.canTakeOver) OutlinedButton(onPressed: _busy ? null : () => _takeOver(row), child: const Text('Átveszem')),
+        if (!assigned && row.canClaim) FilledButton(onPressed: _busy ? null : () => _claim(row.leg), child: const Text('Felveszem')),
+      ]),
     );
+  }
+
+  /// A rendszám-szűrő (gépelés közben): kötőjel, szóköz, kis-nagybetű nem számít.
+  bool _matches(DriverLeg leg) {
+    final plate = _plate.text.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    return plate.isEmpty || leg.registrationNumber.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '').contains(plate);
+  }
+
+  Widget _freeCard(DriverLeg leg, {Color? color}) => LegCard(
+        leg: leg,
+        color: color,
+        // A felvett fuvar innen is megnyílik (és indítható); a még szabad nem a sofőré.
+        onTap: _claimed.contains(leg.legKey) ? () => _openDetail(leg) : () {},
+        showStatus: false,
+        // Az utak sorban mennek: az előző út teljesülése előtt ez nem vehető fel.
+        trailing: _claimed.contains(leg.legKey)
+            ? FilledButton.icon(
+                onPressed: () => _openDetail(leg),
+                style: FilledButton.styleFrom(backgroundColor: AppColors.signalGreen),
+                icon: const Icon(Icons.check_circle),
+                label: const Text('Felvetted – megnyitás'),
+              )
+            : leg.waitsForPreviousLeg
+                ? const Flexible(
+                    child: Text('Előbb az előző útnak kell teljesülnie',
+                        textAlign: TextAlign.right, style: TextStyle(fontSize: 13, color: AppColors.ink600)),
+                  )
+                : FilledButton(onPressed: _busy ? null : () => _claim(leg), child: const Text('Felveszem')),
+      );
+
+  Widget _boardCard(OpenLeg row, {Color? color}) => LegCard(
+        leg: row.leg,
+        color: color,
+        onTap: (row.mine || _claimed.contains(row.leg.legKey)) ? () => _openDetail(row.leg) : () {},
+        trailing: _boardTrailing(row),
+      );
+
+  /// Mai (és lekésett) fuvarok elöl; a későbbi napra szólók külön, színes elválasztó alatt, szürke kártyán.
+  List<Widget> _sections<T>(List<T> items, DriverLeg Function(T) legOf, Widget Function(T, {Color? color}) card) {
+    final now = DateTime.now();
+    final today = items.where((i) => !plannedForLaterDay(legOf(i).plannedStart, now)).toList();
+    final later = items.where((i) => plannedForLaterDay(legOf(i).plannedStart, now)).toList();
+    return [
+      if (today.isNotEmpty) ...[
+        _SectionBand(text: 'MAI FUVAROK (${today.length})', color: AppColors.signalGreen),
+        for (final item in today) card(item),
+      ],
+      if (later.isNotEmpty) ...[
+        _SectionBand(text: 'ELŐJEGYZETT – NEM MAI FUVAROK (${later.length})', color: AppColors.ink600),
+        for (final item in later) card(item, color: AppColors.sheet100),
+      ],
+    ];
   }
 
   Future<void> _claim(DriverLeg leg) async {
@@ -167,12 +215,18 @@ class SearchScreenState extends State<SearchScreen> {
               child: TextField(
                 controller: _plate,
                 textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(labelText: 'Szűrés rendszámra', hintText: 'ABC-123'),
-                onSubmitted: (_) => _load(),
+                // Gépelés közben azonnal szűr (a letöltött listában, hálózat nélkül is).
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Szűrés rendszámra',
+                  hintText: 'ABC-123',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _plate.text.isEmpty
+                      ? null
+                      : IconButton(icon: const Icon(Icons.clear), tooltip: 'Szűrő törlése', onPressed: () => setState(_plate.clear)),
+                ),
               ),
             ),
-            const SizedBox(width: 10),
-            FilledButton(onPressed: _busy ? null : _load, child: const Text('Szűrés')),
             const SizedBox(width: 6),
             IconButton.outlined(
               onPressed: _loading || _busy ? null : _load,
@@ -185,7 +239,7 @@ class SearchScreenState extends State<SearchScreen> {
             child: SegmentedButton<bool>(
               segments: const [
                 ButtonSegment(value: false, icon: Icon(Icons.playlist_add_check), label: Text('Szabad')),
-                ButtonSegment(value: true, icon: Icon(Icons.groups_outlined), label: Text('Nyitott (ki viszi)')),
+                ButtonSegment(value: true, icon: Icon(Icons.groups_outlined), label: Text('Nyitott fuvarok')),
               ],
               selected: {_board},
               onSelectionChanged: (selection) {
@@ -201,16 +255,19 @@ class SearchScreenState extends State<SearchScreen> {
               child: Text(_message!, style: const TextStyle(color: AppColors.signalRed)),
             ),
           if (_board) ...[
-            if (!_loading && _message == null && _open.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 32),
-                child: Text('Nincs nyitott fuvar a sofőrszolgálatodnál.', textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.ink600, fontSize: AppText.secondary)),
+            if (!_loading && _message == null && _open.where((r) => _matches(r.leg)).isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 32),
+                child: Text(_open.isEmpty ? 'Nincs nyitott fuvar a sofőrszolgálatodnál.' : 'Erre a rendszámra nincs találat.', textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.ink600, fontSize: AppText.secondary)),
               ),
-            const SizedBox(height: 12),
-            for (final row in _open)
-              LegCard(leg: row.leg, onTap: (row.mine || _claimed.contains(row.leg.legKey)) ? () => _openDetail(row.leg) : () {}, trailing: _boardTrailing(row)),
+            ..._sections<OpenLeg>(_open.where((r) => _matches(r.leg)).toList(), (r) => r.leg, _boardCard),
           ],
+          if (!_board && !_loading && _message == null && _results.isNotEmpty && _results.where(_matches).isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 32),
+              child: Text('Erre a rendszámra nincs találat.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.ink600, fontSize: AppText.secondary)),
+            ),
           if (!_board && !_loading && _message == null && _results.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 32),
@@ -220,31 +277,45 @@ class SearchScreenState extends State<SearchScreen> {
                 style: TextStyle(color: AppColors.ink600, fontSize: AppText.secondary),
               ),
             ),
-          if (!_board) const SizedBox(height: 12),
-          if (!_board)
-          for (final leg in _results)
-            LegCard(
-              leg: leg,
-              // A felvett fuvar innen is megnyílik (és indítható); a még szabad nem a sofőré.
-              onTap: _claimed.contains(leg.legKey) ? () => _openDetail(leg) : () {},
-              showStatus: false,
-              // Az utak sorban mennek: az előző út teljesülése előtt ez nem vehető fel.
-              trailing: _claimed.contains(leg.legKey)
-                  ? FilledButton.icon(
-                      onPressed: () => _openDetail(leg),
-                      style: FilledButton.styleFrom(backgroundColor: AppColors.signalGreen),
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text('Felvetted – megnyitás'),
-                    )
-                  : leg.waitsForPreviousLeg
-                  ? const Flexible(
-                      child: Text('Előbb az előző útnak kell teljesülnie',
-                          textAlign: TextAlign.right, style: TextStyle(fontSize: 13, color: AppColors.ink600)),
-                    )
-                  : FilledButton(onPressed: _busy ? null : () => _claim(leg), child: const Text('Felveszem')),
-            ),
+          if (!_board) ..._sections<DriverLeg>(_results.where(_matches).toList(), (l) => l, _freeCard),
         ],
       ),
     );
   }
+}
+
+/// Színes elválasztó sáv a lista szakaszai fölött (mai / nem mai).
+class _SectionBand extends StatelessWidget {
+  const _SectionBand({required this.text, required this.color});
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(top: 16, bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
+        child: Text(text, style: const TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, letterSpacing: 0.8, color: Colors.white, fontSize: 15)),
+      );
+}
+
+/// „KIOSZTVA: Név” / „NINCS SOFŐRJE” / „A TIÉD”: a fuvar gazdája egy pillantásra.
+class _AssignChip extends StatelessWidget {
+  const _AssignChip({required this.text, required this.color, this.filled = false});
+  final String text;
+  final Color color;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: filled ? color : Colors.white,
+          border: Border.all(color: color, width: 1.5),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(text,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontFamily: 'BarlowCondensed', fontWeight: FontWeight.w700, fontSize: 14, color: filled ? Colors.white : color)),
+      );
 }

@@ -232,6 +232,14 @@ class WorkService extends ChangeNotifier {
   /// Utána a telefonról is lekerül, a Munkáim frissül.
   Future<void> releaseLeg(DriverLeg leg, {String? reason}) async {
     log.info('work', 'Fuvar leadása: ${leg.legKey} (${leg.orderNo} #${leg.sequenceNo})${reason == null || reason.trim().isEmpty ? '' : ', indokkal'}');
+    // A telefonon felvett, még fel nem küldött fuvar: nincs kinek leadni, a telefonról törlődik.
+    if (LocalRepository.isLocalLeg(leg.legKey)) {
+      await local.discardLocalOrder(leg.legKey);
+      log.info('work', 'Még fel nem küldött fuvar törölve a telefonról: ${leg.legKey}');
+      notifyListeners();
+      unawaited(sync.refreshCount());
+      return;
+    }
     await api.release(leg.legKey, reason: reason);
     try {
       await _refreshFromServer(full: false, why: 'leadás');

@@ -196,7 +196,7 @@ String shortTime(DateTime? t) {
 /// Leadható-e az út a telefonról: kiosztott, még el nem indított, a szerveren is létező,
 /// és nincs rajta megkezdett jegyzőkönyv.
 Future<bool> canRelease(AppServices services, DriverLeg leg) async {
-  if (leg.status != 'ASSIGNED' || LocalRepository.isLocalLeg(leg.legKey)) return false;
+  if (leg.status != 'ASSIGNED') return false;
   return await services.local.inspectionForLeg(leg.legKey, 'PICKUP') == null;
 }
 
@@ -204,6 +204,7 @@ Future<bool> canRelease(AppServices services, DriverLeg leg) async {
 /// Igazat ad, ha az út lekerült a sofőrről.
 Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg leg) async {
   final reason = TextEditingController();
+  final onlyHere = LocalRepository.isLocalLeg(leg.legKey);
   final ok = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -213,10 +214,13 @@ Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg le
           Text('${leg.registrationNumber} · ${leg.fromPlace} → ${leg.toPlace}'
               '${leg.plannedStart == null ? '' : '\n${shortTime(leg.plannedStart)}'}'),
           const SizedBox(height: 12),
-          const Text('A fuvar lekerül rólad, és újra szabad lesz: az iroda vagy egy másik sofőr veheti fel.',
-              style: TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+          Text(
+              onlyHere
+                  ? 'Ezt a fuvart te vetted fel, és még nem ment fel a szerverre: a telefonról törlődik.'
+                  : 'A fuvar lekerül rólad, és újra szabad lesz: az iroda vagy egy másik sofőr veheti fel.',
+              style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
           const SizedBox(height: 12),
-          TextField(
+          if (!onlyHere) TextField(
             controller: reason,
             maxLines: 3,
             minLines: 2,

@@ -146,6 +146,22 @@ class LocalRepository {
     });
   }
 
+  /// A telefonon felvett, még fel nem küldött fuvar törlése („Leadom”): csak amíg a
+  /// feltöltése nem indult el és nincs jegyzőkönyve. Minden helyi nyoma törlődik.
+  Future<void> discardLocalOrder(String legKey) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final ops = await txn.query('sync_operation', where: "entity_id = ? AND operation_type = 'CREATE_ORDER'", whereArgs: [legKey], limit: 1);
+      if (ops.isEmpty) throw StateError('Ez a fuvar már feltöltődött: frissítsd a listát, és úgy add le.');
+      if (ops.first['state'] == 'RUNNING') throw StateError('A fuvar éppen feltöltődik: próbáld újra pár másodperc múlva.');
+      final inspections = await txn.query('local_inspection', columns: ['local_id'], where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
+      if (inspections.isNotEmpty) throw StateError('Ehhez a fuvarhoz már van jegyzőkönyv, ezért nem adható le.');
+      await txn.delete('sync_operation', where: 'leg_key = ? OR entity_id = ?', whereArgs: [legKey, legKey]);
+      await txn.delete('location_point', where: 'leg_key = ?', whereArgs: [legKey]);
+      await txn.delete('cached_leg', where: 'leg_key = ?', whereArgs: [legKey]);
+    });
+  }
+
   /// A sofőr módosítja a még el nem indított út felvételi időpontját (pl. ma kell
   /// elvinni a holnapra tervezettet). Azonnal érvényes a telefonon; a szinkron
   /// viszi fel, a szerver naplózza a régi és az új időpontot.

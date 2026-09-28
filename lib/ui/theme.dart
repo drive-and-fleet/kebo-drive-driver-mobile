@@ -93,10 +93,14 @@ ThemeData buildAppTheme() {
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: AppColors.panel900,
-      indicatorColor: AppColors.panel800,
-      height: 64,
-      labelTextStyle: WidgetStateProperty.all(
-        const TextStyle(fontFamily: _condensed, fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.panelInk),
+      // A kiválasztott fül egyértelmű: élénk kék jelölő, fehér félkövér felirat; a többi halvány.
+      indicatorColor: AppColors.signalBlue,
+      height: 68,
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? const TextStyle(fontFamily: _condensed, fontSize: 14, fontWeight: FontWeight.w800, color: Colors.white)
+            : const TextStyle(fontFamily: _condensed, fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.panelDim),
       ),
       iconTheme: WidgetStateProperty.resolveWith(
         (states) => IconThemeData(color: states.contains(WidgetState.selected) ? Colors.white : AppColors.panelDim),

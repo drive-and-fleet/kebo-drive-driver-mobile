@@ -117,42 +117,72 @@ class TodayScreenState extends State<TodayScreen> {
     final current = today.isEmpty ? null : today.first;
     final rest = today.skip(1).toList();
     final later = today.isEmpty ? nextLaterTrip(_legs, now) : null;
-    return RefreshIndicator(
-      onRefresh: refresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-        children: [
+    // Nincs mára fuvar: egy görgethető (lehúzással frissíthető) oldal.
+    if (current == null) {
+      return RefreshIndicator(
+        onRefresh: refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+          children: [
+            for (final request in _requests) _TransferRequest(request: request, onAnswer: (accept) => _answer(request, accept)),
+            if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
+            _Empty(onBrowseFree: widget.onBrowseFree, next: later, onOpenNext: later == null ? null : () => _open(later)),
+          ],
+        ),
+      );
+    }
+    // Fent rögzítve a mostani fuvar (nem görget el); alatta, vastag elválasztó után,
+    // más háttéren a többi mai fuvar – csak ez a rész görget.
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      ConstrainedBox(
+        // Kis képernyőn (vagy sok átadási kéréssel) se lógjon ki: ott a felső rész is görgethető.
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.6),
+        child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           for (final request in _requests) _TransferRequest(request: request, onAnswer: (accept) => _answer(request, accept)),
           if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: const TextStyle(color: AppColors.signalRed))),
-          if (current == null)
-            _Empty(onBrowseFree: widget.onBrowseFree, next: later, onOpenNext: later == null ? null : () => _open(later))
-          else
-            _CurrentTrip(
-              leg: current,
-              overdue: isOverdue(current, now),
-              waitingCount: today.where((l) => l.status != 'IN_PROGRESS').length,
-              syncState: _syncStates[current.legKey],
-              busy: _busy,
-              onOpen: () => _open(current),
-              onAct: () => _act(current),
-            ),
-          if (rest.isNotEmpty) ...[
-            _Heading('További mai fuvarok (${rest.length})'),
-            // Felvételi idő szerint, tömören: ne vonja el a figyelmet a fenti kártyáról.
-            Card(
-              margin: EdgeInsets.zero,
-              child: Column(children: [
-                for (var i = 0; i < rest.length; i++) ...[
-                  if (i > 0) const Divider(height: 1),
-                  _LaterTodayRow(leg: rest[i], onTap: () => _open(rest[i])),
-                ],
-              ]),
-            ),
-          ],
-        ],
+          _CurrentTrip(
+            leg: current,
+            overdue: isOverdue(current, now),
+            waitingCount: today.where((l) => l.status != 'IN_PROGRESS').length,
+            syncState: _syncStates[current.legKey],
+            busy: _busy,
+            onOpen: () => _open(current),
+            onAct: () => _act(current),
+          ),
+        ]),
+        ),
       ),
-    );
+      Container(height: 4, color: AppColors.ruleFirm),
+      Expanded(
+        child: Container(
+          color: AppColors.sheet100,
+          child: RefreshIndicator(
+            onRefresh: refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+              children: [
+                _Heading(rest.isEmpty ? 'Mára nincs több fuvarod' : 'További mai fuvarok (${rest.length})'),
+                if (rest.isNotEmpty)
+                  // Felvételi idő szerint, tömören: ne vonja el a figyelmet a fenti kártyáról.
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: Column(children: [
+                      for (var i = 0; i < rest.length; i++) ...[
+                        if (i > 0) const Divider(height: 1),
+                        _LaterTodayRow(leg: rest[i], onTap: () => _open(rest[i])),
+                      ],
+                    ]),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ]);
   }
 }
 

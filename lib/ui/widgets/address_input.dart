@@ -24,6 +24,17 @@ class _AddressInputState extends State<AddressInput> {
   List<String> _lastResult = const [];
   /// A listában Geoapify-találat is van: a nevét alul feltüntetjük (az ingyenes csomag feltétele).
   bool _geoapify = false;
+  /// Éppen keres (forgó jel a mezőben), illetve az utolsó keresés nem talált semmit.
+  bool _searching = false;
+  bool _noHits = false;
+
+  void _setState({bool? searching, bool? noHits}) {
+    if (!mounted) return;
+    setState(() {
+      if (searching != null) _searching = searching;
+      if (noHits != null) _noHits = noHits;
+    });
+  }
 
   @override
   void dispose() {
@@ -35,7 +46,10 @@ class _AddressInputState extends State<AddressInput> {
   /// Fél másodperc szünet után kérdez (nem minden betűnél); hálózat nélkül üres a lista.
   Future<List<String>> _options(String text) async {
     final query = text.trim();
-    if (query.length < 4) return const [];
+    if (query.length < 3) {
+      if (_noHits || _searching) _setState(searching: false, noHits: false);
+      return const [];
+    }
     if (query == _lastQuery) return _lastResult;
     // Az előző várakozás azonnal véget ér (üres listával), ez vár tovább.
     _debounce?.cancel();
@@ -44,13 +58,17 @@ class _AddressInputState extends State<AddressInput> {
     _debounce = Timer(const Duration(milliseconds: 450), () { if (!done.isCompleted) done.complete(); });
     await done.future;
     if (query != widget.controller.text.trim()) return const [];
+    _setState(searching: true, noHits: false);
     try {
       final result = await widget.suggest(query);
       _lastQuery = query;
       _lastResult = result.labels;
       _geoapify = result.geoapify;
+      if (query == widget.controller.text.trim()) _setState(searching: false, noHits: result.labels.isEmpty);
       return result.labels;
     } catch (_) {
+      // Hálózat nélkül: nincs ajánlás, a beírt cím marad.
+      _setState(searching: false, noHits: false);
       return const [];
     }
   }
@@ -74,7 +92,13 @@ class _AddressInputState extends State<AddressInput> {
           focusNode: focusNode,
           validator: widget.validator,
           textInputAction: TextInputAction.next,
-          decoration: InputDecoration(labelText: widget.label, suffixIcon: const Icon(Icons.search)),
+          decoration: InputDecoration(
+            labelText: widget.label,
+            helperText: _searching ? 'Címek keresése…' : _noHits ? 'Nincs találat – a beírt cím így is menthető.' : null,
+            suffixIcon: _searching
+                ? const Padding(padding: EdgeInsets.all(14), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                : const Icon(Icons.search),
+          ),
         ),
         optionsViewBuilder: (context, onSelected, options) => Align(
           alignment: Alignment.topLeft,

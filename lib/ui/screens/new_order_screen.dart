@@ -34,23 +34,27 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
   final _pickupAddress = TextEditingController();
   final _pickupContact = TextEditingController();
   final _pickupPhone = TextEditingController();
+  final _pickupEmail = TextEditingController();
   final _dropoffCompany = TextEditingController();
   final _dropoffAddress = TextEditingController();
   final _dropoffContact = TextEditingController();
   final _dropoffPhone = TextEditingController();
+  final _dropoffEmail = TextEditingController();
   final _notes = TextEditingController();
 
   List<Map<String, String>> _services = const [];
   List<Map<String, String>> _fleets = const [];
   String? _serviceId;
   String? _fleetId;
-  DateTime? _pickupAt = DateTime.now().add(const Duration(minutes: 30));
+  DateTime? _pickupAt = _nextQuarter(DateTime.now().add(const Duration(minutes: 30)));
   DateTime? _dropoffAt;
   bool _loading = true;
   bool _saving = false;
   String? _message;
   String? _registryHint;
   Timer? _lookupTimer;
+  /// Amit a nyilvántartás töltött ki (mező → érték): más rendszámnál ezek törlődnek.
+  final Map<TextEditingController, String> _filledFromRegistry = {};
 
   @override
   void initState() {
@@ -63,7 +67,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
   void dispose() {
     _lookupTimer?.cancel();
     for (final c in [_plate, _make, _model, _color, _userName, _userPhone, _userEmail, _extraEmail, _pickupCompany, _pickupAddress,
-      _pickupContact, _pickupPhone, _dropoffCompany, _dropoffAddress, _dropoffContact, _dropoffPhone, _notes]) {
+      _pickupContact, _pickupPhone, _pickupEmail, _dropoffCompany, _dropoffAddress, _dropoffContact, _dropoffPhone, _dropoffEmail, _notes]) {
       c.dispose();
     }
     super.dispose();
@@ -93,16 +97,26 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
 
   void _plateChanged(String value) {
     _lookupTimer?.cancel();
+    // Más rendszám: amit az előző rendszám adatai töltöttek ki (és azóta nem írtad át), törlődik.
+    if (_filledFromRegistry.isNotEmpty || _registryHint != null) {
+      _filledFromRegistry.forEach((c, filled) {
+        if (c.text == filled) c.clear();
+      });
+      _filledFromRegistry.clear();
+      setState(() => _registryHint = null);
+    }
     final serviceId = _serviceId;
     if (serviceId == null || value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').length < 4) return;
     _lookupTimer = Timer(const Duration(milliseconds: 600), () async {
       final record = await widget.services.work.lookupVehicle(serviceId, value);
-      if (!mounted || record == null) return;
+      // Közben tovább gépelt: a válasz a régi rendszámé.
+      if (!mounted || record == null || _plate.text != value) return;
       var filled = 0;
       void fill(TextEditingController c, String key) {
         final stored = record[key]?.toString() ?? '';
         if (stored.isNotEmpty && c.text.trim().isEmpty) {
           c.text = stored;
+          _filledFromRegistry[c] = stored;
           filled++;
         }
       }
@@ -119,25 +133,10 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
     });
   }
 
-  Future<DateTime?> _pickDateTime(DateTime? initial) async {
-    final now = DateTime.now();
-    final start = initial ?? now;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: start,
-      firstDate: now.subtract(const Duration(days: 7)),
-      lastDate: now.add(const Duration(days: 365)),
-    );
-    if (date == null || !mounted) return initial;
-    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(start));
-    if (time == null) return initial;
-    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
-  }
-
-  String _fmt(DateTime? value) {
-    if (value == null) return 'nincs megadva';
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${value.year}.${two(value.month)}.${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+  /// A következő negyedóra (10:07 → 10:15).
+  static DateTime _nextQuarter(DateTime t) {
+    final rounded = DateTime(t.year, t.month, t.day, t.hour, (t.minute / 15).ceil() * 15);
+    return rounded;
   }
 
   String? _required(String? value) => value == null || value.trim().isEmpty ? 'Kötelező' : null;
@@ -152,6 +151,15 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
       return;
     }
     if (!(_form.currentState?.validate() ?? false)) return;
+    final now = DateTime.now().subtract(const Duration(minutes: 1));
+    if (_pickupAt != null && _pickupAt!.isBefore(now)) {
+      setState(() => _message = 'A felvétel időpontja nem lehet a múltban.');
+      return;
+    }
+    if (_dropoffAt != null && _pickupAt != null && _dropoffAt!.isBefore(_pickupAt!)) {
+      setState(() => _message = 'A leadás nem lehet korábban, mint a felvétel.');
+      return;
+    }
     setState(() { _saving = true; _message = null; });
     final fleetName = _fleets.firstWhere((f) => f['id'] == _fleetId, orElse: () => const {'name': ''})['name'] ?? '';
     final payload = <String, dynamic>{
@@ -163,12 +171,12 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
       'notes': _text(_notes),
       'pickup': {
         'addressLine': _pickupAddress.text.trim(), 'companyName': _text(_pickupCompany),
-        'contactName': _text(_pickupContact), 'contactPhone': _text(_pickupPhone),
+        'contactName': _text(_pickupContact), 'contactPhone': _text(_pickupPhone), 'contactEmail': _text(_pickupEmail),
         'plannedFrom': _pickupAt?.toUtc().toIso8601String(),
       },
       'dropoff': {
         'addressLine': _dropoffAddress.text.trim(), 'companyName': _text(_dropoffCompany),
-        'contactName': _text(_dropoffContact), 'contactPhone': _text(_dropoffPhone),
+        'contactName': _text(_dropoffContact), 'contactPhone': _text(_dropoffPhone), 'contactEmail': _text(_dropoffEmail),
         'plannedFrom': _dropoffAt?.toUtc().toIso8601String(),
       },
     }..removeWhere((key, value) => value == null);
@@ -257,32 +265,30 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                   _section('Honnan (felvétel)'),
                   _field(_pickupCompany, 'Cégnév'),
                   AddressInput(controller: _pickupAddress, label: 'Cím *', validator: _required, suggest: widget.services.api.suggestAddresses),
-                  _field(_pickupContact, 'Kapcsolattartó'),
+                  _field(_pickupContact, 'Kapcsolattartó neve'),
                   _field(_pickupPhone, 'Telefon', keyboard: TextInputType.phone),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.schedule),
-                    title: const Text('Felvétel időpontja'),
-                    subtitle: Text(_fmt(_pickupAt)),
-                    onTap: () async {
-                      final picked = await _pickDateTime(_pickupAt);
-                      if (mounted) setState(() => _pickupAt = picked);
-                    },
+                  _field(_pickupEmail, 'E-mail', validator: _email, keyboard: TextInputType.emailAddress),
+                  WhenField(
+                    label: 'Felvétel időpontja',
+                    value: _pickupAt,
+                    earliest: DateTime.now(),
+                    onChanged: (v) => setState(() {
+                      _pickupAt = v;
+                      if (_dropoffAt != null && v != null && _dropoffAt!.isBefore(v)) _dropoffAt = null;
+                    }),
                   ),
                   _section('Hova (leadás)'),
                   _field(_dropoffCompany, 'Cégnév'),
                   AddressInput(controller: _dropoffAddress, label: 'Cím *', validator: _required, suggest: widget.services.api.suggestAddresses),
-                  _field(_dropoffContact, 'Kapcsolattartó'),
+                  _field(_dropoffContact, 'Kapcsolattartó neve'),
                   _field(_dropoffPhone, 'Telefon', keyboard: TextInputType.phone),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.flag_outlined),
-                    title: const Text('Leadás időpontja (nem kötelező)'),
-                    subtitle: Text(_fmt(_dropoffAt)),
-                    onTap: () async {
-                      final picked = await _pickDateTime(_dropoffAt ?? _pickupAt);
-                      if (mounted) setState(() => _dropoffAt = picked);
-                    },
+                  _field(_dropoffEmail, 'E-mail', validator: _email, keyboard: TextInputType.emailAddress),
+                  WhenField(
+                    label: 'Leadás időpontja (nem kötelező)',
+                    value: _dropoffAt,
+                    earliest: _pickupAt ?? DateTime.now(),
+                    optional: true,
+                    onChanged: (v) => setState(() => _dropoffAt = v),
                   ),
                   _section('Megjegyzés'),
                   _field(_notes, 'Megjegyzés (pl. engedélyszám)'),
@@ -305,4 +311,98 @@ class _UpperCaseFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) =>
       newValue.copyWith(text: newValue.text.toUpperCase());
+}
+
+/// Időpont két részben: a nap (naptárból, múltbeli nem választható) és az idő
+/// (lenyíló negyedórás lista; a legkorábbi napon csak a még el nem múlt idők).
+class WhenField extends StatelessWidget {
+  const WhenField({super.key, required this.label, required this.value, required this.earliest, required this.onChanged, this.optional = false});
+  final String label;
+  final DateTime? value;
+  /// Ennél korábbi időpont nem választható.
+  final DateTime earliest;
+  final ValueChanged<DateTime?> onChanged;
+  final bool optional;
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
+  static String _hm(DateTime t) => '${_two(t.hour)}:${_two(t.minute)}';
+  static bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// A nap negyedórái; a legkorábbi napon csak a legkorábbi időtől.
+  List<String> _times(DateTime day) {
+    final all = [for (var m = 0; m < 24 * 60; m += 15) '${_two(m ~/ 60)}:${_two(m % 60)}'];
+    if (!_sameDay(day, earliest)) return all;
+    final from = _hm(earliest);
+    return all.where((t) => t.compareTo(from) >= 0).toList();
+  }
+
+  Future<void> _pickDay(BuildContext context) async {
+    final first = DateTime(earliest.year, earliest.month, earliest.day);
+    final current = value ?? earliest;
+    final day = await showDatePicker(
+      context: context,
+      initialDate: current.isBefore(first) ? first : current,
+      firstDate: first,
+      lastDate: first.add(const Duration(days: 365)),
+    );
+    if (day == null) return;
+    // Az idő marad; ha azon a napon már elmúlt, a legkorábbi választható idő lesz.
+    final keep = value ?? DateTime(day.year, day.month, day.day, 8);
+    var next = DateTime(day.year, day.month, day.day, keep.hour, keep.minute);
+    final times = _times(next);
+    if (!times.contains(_hm(next)) && _sameDay(next, earliest)) {
+      if (times.isEmpty) return;
+      final parts = times.first.split(':');
+      next = DateTime(day.year, day.month, day.day, int.parse(parts[0]), int.parse(parts[1]));
+    }
+    onChanged(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = value;
+    final times = v == null ? const <String>[] : _times(v);
+    final current = v == null ? null : _hm(v);
+    final items = [...times, if (current != null && !times.contains(current)) current]..sort();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+        const SizedBox(height: 6),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.calendar_today),
+              label: Text(v == null ? 'Nap' : '${v.year}.${_two(v.month)}.${_two(v.day)}.'),
+              onPressed: () => _pickDay(context),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            // Sima lenyíló: mindig a pillanatnyi értéket mutatja (a nap váltásakor az idő is változhat).
+            child: InputDecorator(
+              decoration: const InputDecoration(labelText: 'Idő', isDense: true),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: current,
+                  isExpanded: true,
+                  isDense: true,
+                  hint: const Text('óó:pp'),
+                  items: [for (final t in items) DropdownMenuItem(value: t, child: Text(t))],
+                  onChanged: v == null
+                      ? null
+                      : (t) {
+                          if (t == null) return;
+                          final parts = t.split(':');
+                          onChanged(DateTime(v.year, v.month, v.day, int.parse(parts[0]), int.parse(parts[1])));
+                        },
+                ),
+              ),
+            ),
+          ),
+          if (optional && v != null) IconButton(icon: const Icon(Icons.clear), tooltip: 'Törlés', onPressed: () => onChanged(null)),
+        ]),
+      ]),
+    );
+  }
 }

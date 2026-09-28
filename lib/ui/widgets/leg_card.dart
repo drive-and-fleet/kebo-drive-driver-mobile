@@ -6,8 +6,10 @@ import '../theme.dart';
 import 'sync_badge.dart';
 
 class LegCard extends StatelessWidget {
-  const LegCard({super.key, required this.leg, required this.onTap, this.trailing, this.syncState, this.showStatus = true});
+  const LegCard({super.key, required this.leg, required this.onTap, this.trailing, this.syncState, this.showStatus = true, this.color});
   final DriverLeg leg;
+  /// Más háttér (pl. a nem mai fuvaroké a Szabad fuvarok listáján).
+  final Color? color;
   final VoidCallback onTap;
   final Widget? trailing;
 
@@ -21,6 +23,7 @@ class LegCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final vehicle = [leg.make, leg.model].whereType<String>().where((v) => v.isNotEmpty).join(' ');
     return Card(
+      color: color,
       child: InkWell(
         onTap: onTap,
         child: Padding(
