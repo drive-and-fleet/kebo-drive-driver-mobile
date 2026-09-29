@@ -37,6 +37,7 @@ void main() {
     ];
     expect(todaysWork(legs, now).map((l) => l.legKey), ['uton', 'lekesett', 'delutan']);
     expect(nextLaterTrip(legs, now)?.legKey, 'holnap');
+    expect(laterTrips([...legs, _leg('holnapuan', 'ASSIGNED', DateTime(2026, 9, 30, 7))], now).map((l) => l.legKey), ['holnap', 'holnapuan']);
     expect(isOverdue(legs[2], now), isTrue);
     expect(isOverdue(legs[1], now), isFalse);
   });

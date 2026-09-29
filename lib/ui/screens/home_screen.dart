@@ -16,7 +16,7 @@ import 'transfers_screen.dart';
 import '../../logging/app_log.dart';
 import 'bug_report_screen.dart';
 
-const _tabs = ['Ma', 'Előjegyzés', 'Szabad fuvarok'];
+const _tabs = ['Fuvarjaim', 'Előjegyzés', 'Szabad fuvarok'];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.services});
@@ -75,6 +75,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // Bejelentkezés után: értesítési engedély és a telefon regisztrálása (ha a push be van állítva).
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      // Indításkor (és belépés után) azonnal a szerverről: a rám osztott fuvarok, és ami a telefonon feltöltésre vár.
+      unawaited(_todayKey.currentState?.refresh());
+      unawaited(widget.services.sync.run());
       await push.start(context);
       await widget.services.location.evaluate();
     });
@@ -199,7 +202,7 @@ class _HomeScreenState extends State<HomeScreen> {
           unawaited(_refreshCurrentTab());
         },
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.today_outlined), selectedIcon: Icon(Icons.today), label: 'Ma'),
+          NavigationDestination(icon: Icon(Icons.today_outlined), selectedIcon: Icon(Icons.today), label: 'Fuvarjaim'),
           NavigationDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: 'Előjegyzés'),
           NavigationDestination(icon: Icon(Icons.playlist_add_check_outlined), selectedIcon: Icon(Icons.playlist_add_check), label: 'Szabad fuvarok'),
         ],

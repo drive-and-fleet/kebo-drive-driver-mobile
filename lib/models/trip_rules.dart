@@ -46,8 +46,12 @@ List<DriverLeg> todaysWork(Iterable<DriverLeg> legs, DateTime now) {
   return list;
 }
 
-/// A következő, későbbi napra tervezett út (a „Ma” alján: mikor lesz a következő munka).
+/// A sofőr későbbi napra tervezett (még át nem vett) útjai, felvételi idő szerint.
+List<DriverLeg> laterTrips(Iterable<DriverLeg> legs, DateTime now) =>
+    legs.where((l) => l.status == 'ASSIGNED' && plannedForLaterDay(l.plannedStart, now)).toList()..sort(_byStart);
+
+/// A következő, későbbi napra tervezett út.
 DriverLeg? nextLaterTrip(Iterable<DriverLeg> legs, DateTime now) {
-  final later = legs.where((l) => l.status == 'ASSIGNED' && plannedForLaterDay(l.plannedStart, now)).toList()..sort(_byStart);
+  final later = laterTrips(legs, now);
   return later.isEmpty ? null : later.first;
 }

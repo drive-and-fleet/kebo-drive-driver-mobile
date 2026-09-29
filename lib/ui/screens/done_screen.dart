@@ -102,8 +102,8 @@ class _DoneScreenState extends State<DoneScreen> {
           SizedBox(
             height: 56,
             child: back == null
-                ? FilledButton.icon(onPressed: _home, icon: const Icon(Icons.home), label: const Text('Vissza a mai munkához'))
-                : OutlinedButton.icon(onPressed: _home, icon: const Icon(Icons.home), label: const Text('Vissza a mai munkához')),
+                ? FilledButton.icon(onPressed: _home, icon: const Icon(Icons.home), label: const Text('Vissza a Fuvarjaimhoz'))
+                : OutlinedButton.icon(onPressed: _home, icon: const Icon(Icons.home), label: const Text('Vissza a Fuvarjaimhoz')),
           ),
         ],
       ),

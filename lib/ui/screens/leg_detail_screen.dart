@@ -246,12 +246,26 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     final phase = leg == null ? null : nextPhase(leg);
     return Scaffold(
       appBar: AppBar(
-        title: Text(leg?.registrationNumber ?? 'Fuvar'),
+        // Egyértelmű, hogy ez egy Út oldala: fent kicsiben, alatta a rendszám.
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          const Text('ÚT', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1.2, color: AppColors.panelDim)),
+          Text(leg?.registrationNumber ?? 'Fuvar'),
+        ]),
         actions: [
           if (leg != null && _menuItems(leg).isNotEmpty)
             PopupMenuButton<String>(
               onSelected: _menu,
               itemBuilder: (_) => _menuItems(leg),
+              tooltip: 'Az út opciói',
+              // Szöveggel is: látszik, hogy itt vannak az út további műveletei.
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('Út opciói', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.panelInk)),
+                  SizedBox(width: 2),
+                  Icon(Icons.more_vert, color: AppColors.panelInk),
+                ]),
+              ),
             ),
         ],
       ),

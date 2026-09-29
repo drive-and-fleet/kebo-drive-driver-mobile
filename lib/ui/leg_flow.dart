@@ -197,12 +197,16 @@ String shortTime(DateTime? t) {
 /// és nincs rajta megkezdett jegyzőkönyv.
 Future<bool> canRelease(AppServices services, DriverLeg leg) async {
   if (leg.status != 'ASSIGNED') return false;
-  return await services.local.inspectionForLeg(leg.legKey, 'PICKUP') == null;
+  // Az elkezdett, de le nem zárt (fel sem küldött) jegyzőkönyv nem akadály: leadáskor törlődik.
+  final pickup = await services.local.inspectionForLeg(leg.legKey, 'PICKUP');
+  return pickup == null || pickup.status == 'DRAFT';
 }
 
 /// „Leadom ezt a fuvart”: megerősítés, nem kötelező indok, és csak hálózattal.
 /// Igazat ad, ha az út lekerült a sofőrről.
 Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg leg) async {
+  final draft = await services.local.inspectionForLeg(leg.legKey, 'PICKUP');
+  if (!context.mounted) return false;
   final reason = TextEditingController();
   final onlyHere = LocalRepository.isLocalLeg(leg.legKey);
   final ok = await showDialog<bool>(
@@ -219,6 +223,11 @@ Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg le
                   ? 'Ezt a fuvart te vetted fel, és még nem ment fel a szerverre: a telefonról törlődik.'
                   : 'A fuvar lekerül rólad, és újra szabad lesz: az iroda vagy egy másik sofőr veheti fel.',
               style: const TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+          if (draft != null) ...[
+            const SizedBox(height: 8),
+            const Text('Az elkezdett átvételi jegyzőkönyv törlődik (még nem ment fel).',
+                style: TextStyle(fontSize: AppText.secondary, fontWeight: FontWeight.w600, color: AppColors.signalAmber)),
+          ],
           const SizedBox(height: 12),
           if (!onlyHere) TextField(
             controller: reason,

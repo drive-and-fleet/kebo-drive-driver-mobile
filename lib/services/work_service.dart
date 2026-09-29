@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -232,8 +233,13 @@ class WorkService extends ChangeNotifier {
   /// Utána a telefonról is lekerül, a Munkáim frissül.
   Future<void> releaseLeg(DriverLeg leg, {String? reason}) async {
     log.info('work', 'Fuvar leadása: ${leg.legKey} (${leg.orderNo} #${leg.sequenceNo})${reason == null || reason.trim().isEmpty ? '' : ', indokkal'}');
+    final draft = await local.inspectionForLeg(leg.legKey, 'PICKUP');
+    if (draft != null && draft.status != 'DRAFT') {
+      throw StateError('Ehhez az úthoz már van lezárt jegyzőkönyv, ezért nem adható le: szólj az irodának.');
+    }
     // A telefonon felvett, még fel nem küldött fuvar: nincs kinek leadni, a telefonról törlődik.
     if (LocalRepository.isLocalLeg(leg.legKey)) {
+      if (draft != null) await _discardDraft(draft.localId);
       await local.discardLocalOrder(leg.legKey);
       log.info('work', 'Még fel nem küldött fuvar törölve a telefonról: ${leg.legKey}');
       notifyListeners();
@@ -241,12 +247,26 @@ class WorkService extends ChangeNotifier {
       return;
     }
     await api.release(leg.legKey, reason: reason);
+    // Csak a sikeres leadás után: az elkezdett, még fel nem küldött jegyzőkönyv törlődik
+    // (a fotóival, aláírásával együtt); aki a fuvart legközelebb viszi, újrakezdi.
+    if (draft != null) await _discardDraft(draft.localId);
     try {
       await _refreshFromServer(full: false, why: 'leadás');
     } catch (e) {
       log.warn('work', 'A leadás után a munkalista most nem frissült', e);
     }
     notifyListeners();
+  }
+
+  Future<void> _discardDraft(String localId) async {
+    for (final path in await local.discardDraft(localId)) {
+      try {
+        await File(path).delete();
+      } catch (_) {
+        // A fájl már nincs meg: nincs teendő.
+      }
+    }
+    log.info('work', 'Leadás: az elkezdett jegyzőkönyv törölve a telefonról ($localId)');
   }
 
   /// A szolgálat nyitott útjai (csak hálózattal): ki viszi, felvehető / átvehető-e.
