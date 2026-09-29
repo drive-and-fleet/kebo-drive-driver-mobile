@@ -50,11 +50,19 @@ class _FleetDriverAppState extends State<FleetDriverApp> with WidgetsBindingObse
     super.dispose();
   }
 
-  void _changed() => setState(() {});
+  /// A kijelentkezés (vagy a lejárt belépés) után minden megnyitott oldal bezárul,
+  /// hogy azonnal a belépési képernyő látszódjon (ne maradjon fölötte pl. a Szinkron).
+  final _navigator = GlobalKey<NavigatorState>();
+
+  void _changed() {
+    if (!widget.services.auth.isSignedIn) _navigator.currentState?.popUntil((route) => route.isFirst);
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigator,
       title: 'Drive and Fleet Sofőr',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),

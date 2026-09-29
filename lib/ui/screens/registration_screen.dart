@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../api/http_api.dart';
+
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../../logging/app_log.dart';
@@ -76,6 +78,22 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         licenseNumber: _license.text,
       );
       if (!mounted) return;
+      if (result.linked) {
+        // Már volt fiókja (pl. irodai): a sofőrprofil hozzákapcsolódott, e-mail nem kell.
+        await showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Sofőrként is regisztráltál'),
+            content: Text(
+              'A meglévő fiókodhoz sofőrprofil készült.\n\n'
+              'A(z) ${result.serviceName} ügyintézője jóváhagyja, és utána ugyanezzel az e-maillel és jelszóval be tudsz lépni az appba.',
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+          ),
+        );
+        if (mounted) Navigator.pop(context);
+        return;
+      }
       await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(
@@ -91,7 +109,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      // A szerver üzenete, ne a nyers „ApiException(409): …” szöveg.
+      final message = e is ApiException ? e.message : '$e';
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('A regisztráció nem sikerült'),
+            content: Text(message),
+            actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('OK'))],
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

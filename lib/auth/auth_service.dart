@@ -147,7 +147,7 @@ class AuthService extends ChangeNotifier {
   /// e-mailben lévő linkkel meg kell erősíteni a címet, utána a szolgálat
   /// ügyintézője hagyja jóvá. Visszaadja a szolgálat nevét és a címet, ahová a
   /// megerősítő levél megy.
-  Future<({String serviceName, String sentTo})> registerWithPassword({
+  Future<({String serviceName, String sentTo, bool linked})> registerWithPassword({
     required String email,
     required String password,
     required String firstName,
@@ -166,8 +166,9 @@ class AuthService extends ChangeNotifier {
       if (phone?.trim().isNotEmpty == true) 'phone': phone!.trim(),
       if (licenseNumber?.trim().isNotEmpty == true) 'licenseNumber': licenseNumber!.trim(),
     }) as Map<String, dynamic>;
-    log.info('auth', 'Regisztráció rögzítve, megerősítő e-mail sorba állítva');
-    return (serviceName: '${result['serviceOrgName']}', sentTo: '${result['verificationSentTo'] ?? email.trim()}');
+    final linked = result['linkedToExistingAccount'] == true;
+    log.info('auth', linked ? 'Regisztráció: sofőrprofil a meglévő fiókhoz' : 'Regisztráció rögzítve, megerősítő e-mail sorba állítva');
+    return (serviceName: '${result['serviceOrgName']}', sentTo: '${result['verificationSentTo'] ?? email.trim()}', linked: linked);
   }
 
   /// "Elfelejtett jelszó": ha van ilyen fiók, e-mailben jön egy link a webes
