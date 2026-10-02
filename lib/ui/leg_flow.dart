@@ -165,13 +165,14 @@ Future<void> openInspection(BuildContext context, AppServices services, DriverLe
     ));
     return;
   }
-  // A sofőr nem választ: a szolgálat aktív jegyzőkönyv-típusát kapja.
+  // A sofőr nem választ: a megrendeléshez választott jegyzőkönyv-típust kapja,
+  // ha az iroda nem választott, a szolgálat alapértelmezettjét.
   final forms = await services.work.formsFor(leg, activeOnly: true);
   if (forms.isEmpty) {
     throw StateError('Nincs aktív jegyzőkönyv-típus a telefonon. Frissítsd a Munkáim listát hálózat mellett; '
         'ha így sem jelenik meg, a sofőrszolgálat még nem állította be.');
   }
-  final form = forms.first;
+  final form = pickForm(forms, leg.formTypeId);
   final source = copy ? await services.local.copySourceFor(leg, phase) : null;
   final draft = await services.work.openInspection(
     leg: leg,
@@ -202,7 +203,7 @@ Future<bool> canRelease(AppServices services, DriverLeg leg) async {
   return pickup == null || pickup.status == 'DRAFT';
 }
 
-/// „Leadom ezt a fuvart”: megerősítés, nem kötelező indok, és csak hálózattal.
+/// „Lemondom ezt a fuvart”: megerősítés, indoklás (az iroda látja), és csak hálózattal.
 /// Igazat ad, ha az út lekerült a sofőrről.
 Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg leg) async {
   final draft = await services.local.inspectionForLeg(leg.legKey, 'PICKUP');
@@ -212,7 +213,7 @@ Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg le
   final ok = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Leadod ezt a fuvart?'),
+      title: const Text('Lemondod ezt a fuvart?'),
       content: SingleChildScrollView(
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${leg.registrationNumber} · ${leg.fromPlace} → ${leg.toPlace}'
@@ -234,7 +235,11 @@ Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg le
             maxLines: 3,
             minLines: 2,
             maxLength: 400,
-            decoration: const InputDecoration(labelText: 'Indok (nem kötelező)', hintText: 'pl. megbetegedtem'),
+            decoration: const InputDecoration(
+              labelText: 'Miért mondod le? (az iroda látja)',
+              hintText: 'pl. megbetegedtem, elromlott a vonat',
+              helperText: 'Nem kötelező, de segít az irodának.',
+            ),
           ),
         ]),
       ),
@@ -243,7 +248,7 @@ Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg le
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: AppColors.signalRed),
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Leadom'),
+          child: const Text('Lemondom'),
         ),
       ],
     ),
@@ -254,17 +259,22 @@ Future<bool> releaseLeg(BuildContext context, AppServices services, DriverLeg le
   try {
     await services.work.releaseLeg(leg, reason: text);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A fuvart leadtad, lekerült rólad.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A fuvart lemondtad, lekerült rólad. Az iroda látja az indokot.')));
     }
     return true;
   } catch (e) {
     log.warn('work', 'A fuvar leadása nem sikerült: ${leg.legKey}', e);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('A leadás nem sikerült (internet kell hozzá): $e'),
+        content: Text('A lemondás nem sikerült (internet kell hozzá): $e'),
         duration: const Duration(seconds: 6),
       ));
     }
     return false;
   }
 }
+
+/// A fuvar jegyzőkönyv-típusa a telefonon lévők közül: a megrendelésé, különben
+/// az alapértelmezett, végső esetben az első.
+FormTypeConfig pickForm(List<FormTypeConfig> forms, String? orderFormTypeId) =>
+    forms.where((f) => f.id == orderFormTypeId).firstOrNull ?? forms.where((f) => f.isDefault).firstOrNull ?? forms.first;

@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       signed: ${{ steps.sign.outputs.signed }}
+      push: ${{ steps.push.outputs.push }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
       KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -74,9 +75,27 @@ jobs:
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
+      - id: push
+        name: Push-értesítés (ha vannak Firebase-adatok)
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+        run: |
+          # A config/vps.json-ban nincs Firebase-adat (a push ki van kapcsolva): a secretekből kerül bele.
+          if [ -n "$FIREBASE_PROJECT_ID" ] && [ -n "$FIREBASE_API_KEY" ] && [ -n "$FIREBASE_MESSAGING_SENDER_ID" ] && [ -n "$FIREBASE_ANDROID_APP_ID" ]; then
+            jq '. + {PUSH_ENABLED: true, FIREBASE_PROJECT_ID: env.FIREBASE_PROJECT_ID, FIREBASE_API_KEY: env.FIREBASE_API_KEY,
+                     FIREBASE_MESSAGING_SENDER_ID: env.FIREBASE_MESSAGING_SENDER_ID, FIREBASE_ANDROID_APP_ID: env.FIREBASE_ANDROID_APP_ID}' \
+              config/vps.json > config/ci.json
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            cp config/vps.json config/ci.json
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: APK
         run: |
-          flutter build apk --release --dart-define-from-file=config/vps.json --build-name="$VERSION" --build-number="${{ github.run_number }}"
+          flutter build apk --release --dart-define-from-file=config/ci.json --build-name="$VERSION" --build-number="${{ github.run_number }}"
           mv build/app/outputs/flutter-apk/app-release.apk "flottafuvar-sofor-$VERSION.apk"
       - uses: actions/upload-artifact@v7
         with:
@@ -92,6 +111,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CHANGES: ${{ needs.version.outputs.changes }}
       SIGNED: ${{ needs.build.outputs.signed }}
+      PUSH: ${{ needs.build.outputs.push }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -100,6 +120,7 @@ jobs:
       - run: |
           note=""
           [ "$SIGNED" = "true" ] || note=$'\n\n⚠️ Debug-aláírással készült (nincs release-kulcs a secretek között): telepíthető, de a későbbi, kulccsal aláírt verzió előtt el kell távolítani.'
+          [ "$PUSH" = "true" ] || note="$note"$'\n\n⚠️ Push-értesítés nélkül készült: hiányoznak a FIREBASE_* secretek (lásd a dokumentáció CI-CD.md leírását).'
           gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes "${CHANGES:-(nincs leírás)}$note" flottafuvar-sofor-*.apk
 
   notify:

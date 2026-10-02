@@ -237,7 +237,7 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     if (leg.status == 'ASSIGNED' && !LocalRepository.isLocalLeg(leg.legKey))
       const PopupMenuItem(value: 'transfer', child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Átadás másik sofőrnek'))),
     if (_releasable)
-      const PopupMenuItem(value: 'release', child: ListTile(leading: Icon(Icons.logout, color: AppColors.signalRed), title: Text('Leadom ezt a fuvart'))),
+      const PopupMenuItem(value: 'release', child: ListTile(leading: Icon(Icons.logout, color: AppColors.signalRed), title: Text('Lemondom ezt a fuvart'))),
       ];
 
   @override

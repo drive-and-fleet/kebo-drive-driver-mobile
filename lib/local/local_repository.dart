@@ -433,8 +433,9 @@ class LocalRepository {
   Future<void> cacheForms(String serviceOrgId, List<dynamic> rawForms) async {
     final db = await _db;
     await db.transaction((txn) async {
-      // A szerver csak az aktív jegyzőkönyv-típust küldi (szolgálatonként egyet).
-      // Ha az iroda közben másikat aktivált, a régit nem dobjuk el, amíg egy
+      // A szerver az aktív jegyzőkönyv-típusokat küldi (több is lehet, egy az alapértelmezett),
+      // és azokat is, amelyeket a sofőr útjainak megrendelése használ.
+      // Ha az iroda közben egyet kivezetett, a régit nem dobjuk el, amíg egy
       // helyi jegyzőkönyv hivatkozik rá (félkész vagy még fel nem töltött, vagy
       // csak megtekinthető): az inaktív marad, új jegyzőkönyvet viszont nem kap.
       final incoming = {
@@ -463,6 +464,7 @@ class LocalRepository {
           'name': '${form['name']}',
           'description': form['description']?.toString(),
           'active': 1,
+          'is_default': form['isDefault'] == true || form['isDefault'] == 1 ? 1 : 0,
           'updated_at': now,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
 
@@ -548,6 +550,7 @@ class LocalRepository {
         code: '${form['code']}',
         name: '${form['name']}',
         description: form['description']?.toString(),
+        isDefault: form['is_default'] == 1,
         fields: fields,
         photoRequirements: photoRows.map((photo) => PhotoRequirement(
           photoType: '${photo['photo_type']}',

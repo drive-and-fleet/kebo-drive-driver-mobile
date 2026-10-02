@@ -80,6 +80,7 @@ class DriverLeg {
     this.vehicleNotes,
     this.vehicleExtraEmail,
     this.locationSharing = false,
+    this.formTypeId,
   });
 
   final String? legId;
@@ -136,6 +137,10 @@ class DriverLeg {
   /// fuvar közben (átvételtől leadásig) a telefon akkukímélően küldi a helyzetét.
   final bool locationSharing;
 
+  /// A megrendelés jegyzőkönyv-típusa (az iroda választja; üresen a szolgálat
+  /// alapértelmezettje). Null a régi szervertől / régi gyorsítótárból.
+  final String? formTypeId;
+
   /// A cím a cégnévvel együtt, ahogy a sofőrnek mutatjuk.
   String get fromPlace => _place(fromCompanyName, fromAddress);
   String get toPlace => _place(toCompanyName, toAddress);
@@ -191,6 +196,7 @@ class DriverLeg {
         vehicleNotes: json['vehicleNotes']?.toString(),
         vehicleExtraEmail: json['vehicleExtraEmail']?.toString(),
         locationSharing: _flag(json['locationSharing']) ?? false,
+        formTypeId: json['formTypeId']?.toString(),
       );
 
   Map<String, dynamic> toCacheMap() => {
@@ -229,6 +235,7 @@ class DriverLeg {
         'vehicle_notes': vehicleNotes,
         'vehicle_extra_email': vehicleExtraEmail,
         'location_sharing': locationSharing ? 1 : 0,
+        'form_type_id': formTypeId,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -268,6 +275,7 @@ class DriverLeg {
         vehicleNotes: json['vehicle_notes']?.toString(),
         vehicleExtraEmail: json['vehicle_extra_email']?.toString(),
         locationSharing: _flag(json['location_sharing']) ?? false,
+        formTypeId: json['form_type_id']?.toString(),
       );
 
   DriverLeg copyWithStatus(String newStatus) => DriverLeg(
@@ -308,6 +316,7 @@ class DriverLeg {
         vehicleNotes: vehicleNotes,
         vehicleExtraEmail: vehicleExtraEmail,
         locationSharing: locationSharing,
+        formTypeId: formTypeId,
       );
 }
 
@@ -374,12 +383,15 @@ class FormTypeConfig {
     this.description,
     required this.fields,
     required this.photoRequirements,
+    this.isDefault = false,
   });
   final String id;
   final String serviceOrgId;
   final String code;
   final String name;
   final String? description;
+  /// A szolgálat alapértelmezett jegyzőkönyv-típusa (ha a megrendelés nem mond mást).
+  final bool isDefault;
   final List<FormFieldConfig> fields;
   final List<PhotoRequirement> photoRequirements;
 }

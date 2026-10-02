@@ -12,7 +12,7 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
       onUpgrade: _upgrade,
@@ -58,6 +58,7 @@ class LocalDatabase {
         vehicle_notes TEXT,
         vehicle_extra_email TEXT,
         location_sharing INTEGER NOT NULL DEFAULT 0,
+        form_type_id TEXT,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -70,6 +71,7 @@ class LocalDatabase {
         name TEXT NOT NULL,
         description TEXT,
         active INTEGER NOT NULL DEFAULT 1,
+        is_default INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       )
     ''');
@@ -322,6 +324,11 @@ class LocalDatabase {
         await db.execute('ALTER TABLE local_inspection ADD COLUMN $column REAL');
       }
       await _createLocationPoint(db);
+    }
+    if (oldVersion < 8) {
+      // A megrendelés jegyzőkönyv-típusa (több aktív típus közül az irodáé).
+      await db.execute('ALTER TABLE cached_leg ADD COLUMN form_type_id TEXT');
+      await db.execute('ALTER TABLE cached_form_type ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0');
     }
   }
 

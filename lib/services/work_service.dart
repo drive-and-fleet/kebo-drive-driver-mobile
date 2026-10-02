@@ -350,18 +350,26 @@ class WorkService extends ChangeNotifier {
   }
 
   /// [onStep] a képernyőnek mondja, hol tart a lezárás (a sofőr lássa, hogy halad).
-  Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form, {void Function(String step)? onStep}) async {
-    onStep?.call('Adatok ellenőrzése…');
+  /// Ami még hiányzik a lezáráshoz (kötelező mezők, fotók, aláírás, illetve hogy az
+  /// út most indulhat-e); üres lista: lezárható. A lezárás gombja ezzel kezd, a
+  /// megerősítő kérdés csak utána jön.
+  Future<List<String>> closeProblems(LocalInspectionDraft draft, FormTypeConfig form) async {
     if (draft.inspectionType == 'PICKUP') {
       // Az átvétel lezárása indítja az utat: itt is érvényes a tiltás (közben változhatott).
       final leg = await local.cachedLeg(LocalRepository.currentLegKey(draft.legKey));
       final blocker = leg == null ? null : await startBlocker(leg);
-      if (blocker != null) throw StateError(blocker.message);
+      if (blocker != null) return [blocker.message];
     }
     final result = await InspectionValidator(local).validate(draft, form);
-    if (!result.valid) {
-      log.warn('insp', 'Lezárás elutasítva: ${draft.inspectionType} ${draft.localId}', result.errors.join('; '));
-      throw StateError(result.errors.join('\n'));
+    return result.valid ? const [] : result.errors;
+  }
+
+  Future<String?> finalizeInspection(LocalInspectionDraft draft, FormTypeConfig form, {void Function(String step)? onStep}) async {
+    onStep?.call('Adatok ellenőrzése…');
+    final problems = await closeProblems(draft, form);
+    if (problems.isNotEmpty) {
+      log.warn('insp', 'Lezárás elutasítva: ${draft.inspectionType} ${draft.localId}', problems.join('; '));
+      throw StateError(problems.join('\n'));
     }
     // Hol volt a telefon a lezáráskor (ha van helyengedély): a szerver ebből pótolja a pont nélküli megállót.
     onStep?.call('Helyzet rögzítése…');

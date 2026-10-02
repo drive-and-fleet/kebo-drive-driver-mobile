@@ -9,6 +9,7 @@ import '../../local/local_repository.dart';
 import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
+import '../theme.dart';
 import '../widgets/dynamic_field.dart';
 import '../../logging/app_log.dart';
 import 'done_screen.dart';
@@ -403,8 +404,44 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     }
   }
 
+  /// Lezárás: előbb a kötelező adatok ellenőrzése – ha valami hiányzik, azonnal
+  /// kiírjuk, és nem indul el a lezárás –, csak utána a megerősítő kérdés.
   Future<void> _confirmFinalize() async {
-    final pickup = _draft?.inspectionType == 'PICKUP';
+    final draft = _draft;
+    if (draft == null) return;
+    final pickup = draft.inspectionType == 'PICKUP';
+    // A még időzített megjegyzés-mentés előbb lefut, hogy az ellenőrzés a friss adatot lássa.
+    if (_noteTimer?.isActive ?? false) {
+      _noteTimer!.cancel();
+      await _saveNote();
+    }
+    final problems = await widget.services.work.closeProblems(draft, widget.form);
+    if (!mounted) return;
+    if (problems.isNotEmpty) {
+      log.info('insp', 'Lezárás előtti ellenőrzés: hiányzik ${problems.length} dolog (${draft.localId})');
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Még nem zárható le'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Pótold ezeket, utána zárd le újra:'),
+              const SizedBox(height: 8),
+              for (final problem in problems)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('•  ', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.signalRed)),
+                    Expanded(child: Text(problem)),
+                  ]),
+                ),
+            ]),
+          ),
+          actions: [FilledButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Rendben'))],
+        ),
+      );
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(

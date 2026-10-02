@@ -7,6 +7,7 @@ import '../../models/trip_rules.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
 import '../widgets/leg_card.dart';
+import 'home_screen.dart';
 import 'leg_detail_screen.dart';
 import '../../logging/app_log.dart';
 
@@ -121,7 +122,9 @@ class SearchScreenState extends State<SearchScreen> {
       widget.onClaimed?.call();
       if (!mounted) return;
       setState(() { _message = null; _claimed.add(row.leg.legKey); });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Átvetted: a fuvar a Munkáid között van.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Átvetted: a fuvar a Fuvarjaim között van.')));
+      // Ami az enyém lett, azt a Fuvarjaim nézetben látom.
+      HomeScreen.tabRequest.value = 0;
     } catch (e) {
       log.warn('work', 'Az átvétel nem sikerült: ${row.leg.legKey}', e);
       if (mounted) setState(() => _message = '$e');
@@ -219,7 +222,9 @@ class SearchScreenState extends State<SearchScreen> {
       widget.onClaimed?.call();
       if (!mounted) return;
       setState(() { _message = null; _claimed.add(leg.legKey); });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Felvetted: a fuvar a Munkáid között van, offline is elérhető.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Felvetted: a fuvar a Fuvarjaim között van, offline is elérhető.')));
+      // Sikeres felvétel után a Fuvarjaim nézet jön (ott a felvett fuvar).
+      HomeScreen.tabRequest.value = 0;
     } catch (e) {
       log.warn('work', 'Fuvar felvétele nem sikerült: ${leg.legKey}', e);
       if (mounted) setState(() => _message = '$e');
