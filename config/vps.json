@@ -1,6 +1,10 @@
 {
   "DRIVER_API_BASE_URL": "https://app.flottafuvar.hu/driver-api",
   "SOCIAL_LOGIN_ENABLED": "false",
-  "PUSH_ENABLED": "false",
-  "PUSH_IOS_ENABLED": "false"
+  "PUSH_ENABLED": "true",
+  "PUSH_IOS_ENABLED": "false",
+  "FIREBASE_PROJECT_ID": "flottafuvar-b3053",
+  "FIREBASE_MESSAGING_SENDER_ID": "144893576500",
+  "FIREBASE_ANDROID_APP_ID": "1:144893576500:android:a719a7683754bf17225161",
+  "FIREBASE_API_KEY": "AIzaSyCV_Lc9Xmw30U_XnowqidwOk334zI6X91I"
 }
