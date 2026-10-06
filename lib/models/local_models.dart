@@ -11,6 +11,7 @@ class LocalInspectionDraft {
     this.copyFromServerId,
     this.copyFromLocalId,
     this.generalNote,
+    this.signatureWaiver,
   });
 
   final String localId;
@@ -24,6 +25,8 @@ class LocalInspectionDraft {
   final String status;
   /// „Általános megjegyzés”; a másolás ezt is viszi.
   final String? generalNote;
+  /// Miért nincs aláírás: USER_ABSENT (a használó nincs jelen), NOT_POSSIBLE (nincs rá lehetőség); null = kell.
+  final String? signatureWaiver;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -37,6 +40,7 @@ class LocalInspectionDraft {
         copyFromLocalId: row['copy_from_local_id']?.toString(),
         status: '${row['status']}',
         generalNote: row['general_note']?.toString(),
+        signatureWaiver: row['signature_waiver']?.toString(),
         createdAt: DateTime.parse('${row['created_at']}'),
         updatedAt: DateTime.parse('${row['updated_at']}'),
       );

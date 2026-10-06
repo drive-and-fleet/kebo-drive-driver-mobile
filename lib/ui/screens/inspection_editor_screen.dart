@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:signature/signature.dart';
 
 import '../../local/local_repository.dart';
@@ -13,6 +12,8 @@ import '../theme.dart';
 import '../widgets/dynamic_field.dart';
 import '../../logging/app_log.dart';
 import 'done_screen.dart';
+import '../leg_data_edit.dart';
+import '../photo_capture.dart';
 
 // ponytail: fix lista, DB-lookup csak ha szolgálatonként eltérő értékkészlet kell.
 const _damageLocations = [
@@ -160,7 +161,8 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   }
 
   Future<void> _takeGeneralPhoto(String type) async {
-    final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2200);
+    final image = await capturePhoto(widget.services,
+        PendingCapture(draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: type));
     if (image == null) {
       log.debug('insp', 'Fotó megszakítva: $type');
       return;
@@ -170,64 +172,26 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     await _guard(() => widget.services.local.addPhoto(inspectionLocalId: widget.draftId, photoType: type, localPath: path));
   }
 
+  /// Új sérülés: teljes képernyős űrlapon (a billentyűzet nem takar el semmit). A leírás
+  /// nem kötelező – üresen a helyből és a típusból áll össze –, de valamit meg kell adni;
+  /// ha nincs semmi, az űrlap kiírja, és nyitva marad.
   Future<void> _addDamage() async {
-    final description = TextEditingController();
-    String? location;
-    String? type;
-    String? severity;
-    bool preexisting = false;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Sérülés rögzítése'),
-        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: description, decoration: const InputDecoration(labelText: 'Leírás *'), maxLines: 2),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            value: location,
-            decoration: const InputDecoration(labelText: 'Helye az autón'),
-            items: [for (final v in _damageLocations) DropdownMenuItem(value: v, child: Text(v))],
-            onChanged: (v) => setDialogState(() => location = v),
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            value: type,
-            decoration: const InputDecoration(labelText: 'Sérülés típusa'),
-            items: [for (final v in _damageTypes) DropdownMenuItem(value: v, child: Text(v))],
-            onChanged: (v) => setDialogState(() => type = v),
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            value: severity,
-            decoration: const InputDecoration(labelText: 'Súlyosság'),
-            items: [for (final v in _damageSeverities) DropdownMenuItem(value: v, child: Text(v))],
-            onChanged: (v) => setDialogState(() => severity = v),
-          ),
-          CheckboxListTile(contentPadding: EdgeInsets.zero, title: const Text('Korábban is meglévő sérülés'), value: preexisting, onChanged: (v) => setDialogState(() => preexisting = v ?? false)),
-        ])),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, description.text.trim().isNotEmpty), child: const Text('Mentés')),
-        ],
-      )),
-    );
-    if (ok == true) {
-      final text = description.text.trim();
-      log.info('insp', 'Sérülés rögzítve: ${location ?? '-'} / ${type ?? '-'} / ${severity ?? '-'}${preexisting ? ' (korábbi)' : ''} (${widget.draftId})');
-      await _guard(() => widget.services.local.addDamage(
-            inspectionLocalId: widget.draftId,
-            description: text,
-            location: location,
-            damageType: type,
-            severity: severity,
-            isPreexisting: preexisting,
-          ));
-    }
-    description.dispose();
+    final result = await Navigator.of(context).push<_DamageInput>(MaterialPageRoute(fullscreenDialog: true, builder: (_) => const _DamageForm()));
+    if (result == null) return;
+    log.info('insp', 'Sérülés rögzítve: ${result.location ?? '-'} / ${result.type ?? '-'} / ${result.severity ?? '-'}${result.preexisting ? ' (korábbi)' : ''} (${widget.draftId})');
+    await _guard(() => widget.services.local.addDamage(
+          inspectionLocalId: widget.draftId,
+          description: result.description,
+          location: result.location,
+          damageType: result.type,
+          severity: result.severity,
+          isPreexisting: result.preexisting,
+        ));
   }
 
   Future<void> _takeDamagePhoto(LocalDamage damage) async {
-    final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2200);
+    final image = await capturePhoto(widget.services, PendingCapture(
+        draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: 'DAMAGE', damageLocalId: damage.localId));
     if (image == null) return;
     final path = await widget.services.fileStore.persistImage(image.path);
     log.info('insp', 'Sérülésfotó készült: ${damage.localId} (${widget.draftId})');
@@ -262,15 +226,51 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     });
   }
 
+  /// Az út friss adatai (az „Adatok” módosítása után), különben a megnyitáskori.
+  DriverLeg? _freshLeg;
+  DriverLeg get _leg => _freshLeg ?? widget.leg;
+
+  Future<void> _editData() async {
+    if (!await editLegData(context, widget.services, _leg)) return;
+    final fresh = await widget.services.local.cachedLeg(LocalRepository.currentLegKey(widget.leg.legKey));
+    if (mounted && fresh != null) setState(() => _freshLeg = fresh);
+  }
+
+  /// Miért nincs aláírás (a két jelölő közül legfeljebb egy); null: kell szignó.
+  Future<void> _setWaiver(String? waiver) async {
+    log.info('insp', 'Aláírás elmaradásának oka: ${waiver ?? '-'} (${widget.draftId})');
+    await _guard(() => widget.services.local.setSignatureWaiver(widget.draftId, waiver));
+  }
+
   Future<void> _addSignature() async {
-    final name = TextEditingController(text: widget.leg.vehicleUserName ?? '');
+    // Az aláíró neve alapból üres: sokszor nem a kapcsolattartó veszi át az autót (pl. a szervizben).
+    // A megálló kapcsolattartója és az autó használója egy koppintással beírható.
+    final name = TextEditingController();
+    final pickup = _draft?.inspectionType == 'PICKUP';
+    final suggestions = <String, String>{
+      if ((pickup ? _leg.fromContactName : _leg.toContactName)?.trim().isNotEmpty ?? false)
+        'Kapcsolattartó': (pickup ? _leg.fromContactName : _leg.toContactName)!.trim(),
+      if (_leg.vehicleUserName?.trim().isNotEmpty ?? false) 'Használó': _leg.vehicleUserName!.trim(),
+    };
     final controller = SignatureController(penStrokeWidth: 3);
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Kézi szignó'),
         content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'Aláíró neve')),
+          TextField(controller: name, decoration: InputDecoration(labelText: pickup ? 'Átadó neve' : 'Átvevő neve')),
+          if (suggestions.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(spacing: 8, children: [
+                for (final entry in suggestions.entries)
+                  ActionChip(
+                    avatar: const Icon(Icons.content_copy, size: 16),
+                    label: Text('${entry.key}: ${entry.value}'),
+                    onPressed: () => name.text = entry.value,
+                  ),
+              ]),
+            ),
           const SizedBox(height: 12),
           Container(height: 220, decoration: BoxDecoration(border: Border.all(color: Colors.grey)), child: Signature(controller: controller, backgroundColor: Colors.white)),
           Align(alignment: Alignment.centerRight, child: TextButton(onPressed: controller.clear, child: const Text('Törlés'))),
@@ -504,7 +504,11 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
     final open = _draft?.status == 'DRAFT';
     final copied = open && (_draft?.copyFromServerId != null || _draft?.copyFromLocalId != null);
     final scaffold = Scaffold(
-      appBar: AppBar(title: Text(phase == 'PICKUP' ? 'Átvételi jegyzőkönyv' : 'Leadási jegyzőkönyv')),
+      appBar: AppBar(title: Text(phase == 'PICKUP' ? 'Átvételi jegyzőkönyv' : 'Leadási jegyzőkönyv'), actions: [
+        // Az autó / átvevő adatainak javítása a jegyzőkönyvből is (megerősítés után).
+        if (open)
+          TextButton.icon(onPressed: _editData, icon: const Icon(Icons.edit_note), label: const Text('Adatok')),
+      ]),
       floatingActionButton: open && !_finalizing
           ? FloatingActionButton.extended(
               onPressed: _confirmFinalize,
@@ -609,6 +613,24 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                     label: Text(_signatures.isEmpty ? 'Szignó' : 'Szignó cseréje'),
                   ),
                 ]),
+                // Ha nem lehet aláíratni, az ok megadásával a szignó nem kötelező; a PDF-en a szignó helyén ez áll.
+                if (_signatures.isEmpty) ...[
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('A használó nincs jelen'),
+                    value: _draft?.signatureWaiver == 'USER_ABSENT',
+                    onChanged: _mediaLocked ? null : (v) => _setWaiver(v == true ? 'USER_ABSENT' : null),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Átvételi ponton aláírás megadására nincs lehetőség'),
+                    value: _draft?.signatureWaiver == 'NOT_POSSIBLE',
+                    onChanged: _mediaLocked ? null : (v) => _setWaiver(v == true ? 'NOT_POSSIBLE' : null),
+                  ),
+                  if (_draft?.signatureWaiver != null)
+                    const Text('A szignó nem kötelező: a jegyzőkönyvön (PDF) az aláírás helyén ez az ok szerepel.',
+                        style: TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+                ],
                 for (final signature in _signatures)
                   ListTile(
                     leading: const Icon(Icons.draw),
@@ -678,6 +700,103 @@ class _PhotoStrip extends StatelessWidget {
           }
           return Container(width: 84, height: 84, alignment: Alignment.center, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.photo), Text(photo.baseline ? 'Másolt' : photo.photoType, textAlign: TextAlign.center)]));
         },
+      ),
+    );
+  }
+}
+
+class _DamageInput {
+  const _DamageInput({required this.description, this.location, this.type, this.severity, this.preexisting = false});
+  final String description;
+  final String? location;
+  final String? type;
+  final String? severity;
+  final bool preexisting;
+}
+
+/// Egy sérülés adatai, saját képernyőn.
+class _DamageForm extends StatefulWidget {
+  const _DamageForm();
+  @override
+  State<_DamageForm> createState() => _DamageFormState();
+}
+
+class _DamageFormState extends State<_DamageForm> {
+  final _description = TextEditingController();
+  String? _location;
+  String? _type;
+  String? _severity;
+  bool _preexisting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _description.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final text = _description.text.trim();
+    if (text.isEmpty && _location == null && _type == null) {
+      setState(() => _error = 'Add meg a sérülés helyét, típusát vagy leírását.');
+      return;
+    }
+    final description = text.isNotEmpty ? text : [_type, _location].whereType<String>().join(', ');
+    Navigator.of(context).pop(_DamageInput(description: description, location: _location, type: _type, severity: _severity, preexisting: _preexisting));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sérülés rögzítése'), actions: [TextButton(onPressed: _save, child: const Text('Mentés'))]),
+      body: SafeArea(
+        child: ListView(padding: const EdgeInsets.all(16), children: [
+          DropdownButtonFormField<String>(
+            value: _location,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Helye az autón'),
+            items: [for (final v in _damageLocations) DropdownMenuItem(value: v, child: Text(v, overflow: TextOverflow.ellipsis))],
+            onChanged: (v) => setState(() { _location = v; _error = null; }),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _type,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Sérülés típusa'),
+            items: [for (final v in _damageTypes) DropdownMenuItem(value: v, child: Text(v))],
+            onChanged: (v) => setState(() { _type = v; _error = null; }),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _severity,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Súlyosság'),
+            items: [for (final v in _damageSeverities) DropdownMenuItem(value: v, child: Text(v))],
+            onChanged: (v) => setState(() => _severity = v),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _description,
+            minLines: 2,
+            maxLines: 4,
+            onChanged: (_) { if (_error != null) setState(() => _error = null); },
+            decoration: const InputDecoration(labelText: 'Leírás', hintText: 'nem kötelező – üresen a helyből és a típusból áll össze'),
+          ),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Korábban is meglévő sérülés'),
+            value: _preexisting,
+            onChanged: (v) => setState(() => _preexisting = v ?? false),
+          ),
+          if (_error != null) Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_error!, style: const TextStyle(color: AppColors.signalRed, fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(onPressed: _save, icon: const Icon(Icons.check), label: const Text('Sérülés mentése')),
+          const SizedBox(height: 8),
+          const Text('Utána a sérülés kártyáján a „Fotó” gombbal készíts róla képet.', style: TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+        ]),
       ),
     );
   }

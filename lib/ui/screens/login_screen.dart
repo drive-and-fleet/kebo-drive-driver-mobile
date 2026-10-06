@@ -6,6 +6,7 @@ import '../../auth/auth_service.dart';
 import '../../config/app_config.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
+import '../widgets/app_version.dart';
 import 'registration_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -116,6 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text('Sofőr alkalmazás', textAlign: TextAlign.center, style: TextStyle(color: AppColors.panelDim, fontSize: AppText.secondary)),
+                  const Center(child: AppVersionText(style: TextStyle(color: AppColors.panelDim, fontSize: AppText.secondary))),
                   const SizedBox(height: 32),
                   Container(
                     padding: const EdgeInsets.all(20),

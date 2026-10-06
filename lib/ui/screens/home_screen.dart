@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../photo_capture.dart';
+
 import '../../models/models.dart';
 import '../../models/trip_rules.dart';
 import '../../services/app_services.dart';
@@ -74,6 +76,14 @@ class _HomeScreenState extends State<HomeScreen> {
     push.foregroundMessage.addListener(_showForeground);
     // Bejelentkezés után: értesítési engedély és a telefon regisztrálása (ha a push be van állítva).
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      // Más sofőr munkája maradt a telefonon (kijelentkezés nélkül lépett be más): eldobjuk.
+      final session = widget.services.auth.session;
+      if (session != null && await widget.services.local.claimForDriver(session.driverId)) {
+        log.info('work', 'A telefonon egy másik sofőr munkája volt: törölve');
+      }
+      // A kamera idejére leállt az app: a fotó a helyére, a jegyzőkönyv újra megnyílik.
+      if (mounted) await recoverPendingCapture(context, widget.services);
       if (!mounted) return;
       // Indításkor (és belépés után) azonnal a szerverről: a rám osztott fuvarok, és ami a telefonon feltöltésre vár.
       unawaited(_todayKey.currentState?.refresh());

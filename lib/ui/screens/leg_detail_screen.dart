@@ -5,6 +5,7 @@ import '../../logging/app_log.dart';
 import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
+import '../leg_data_edit.dart';
 import '../leg_flow.dart';
 import '../theme.dart';
 import '../widgets/sync_badge.dart';
@@ -148,85 +149,15 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     }
   }
 
-  /// Az autó minden adata javítható: rendszám, típus, szín, a használó neve,
-  /// telefonja, e-mail-címe, és a további cím a jegyzőkönyvekhez. A telefonon
-  /// azonnal érvényes, a szinkron viszi fel; az iroda naplózva látja.
+  /// Az adatok módosítása (megerősítés után): autó, használó, kapcsolattartók.
   Future<void> _editVehicle(DriverLeg leg) async {
-    final fields = <String, TextEditingController>{
-      'plate': TextEditingController(text: leg.registrationNumber),
-      'make': TextEditingController(text: leg.make ?? ''),
-      'model': TextEditingController(text: leg.model ?? ''),
-      'color': TextEditingController(text: leg.color ?? ''),
-      'userName': TextEditingController(text: leg.vehicleUserName ?? ''),
-      'userPhone': TextEditingController(text: leg.vehicleUserPhone ?? ''),
-      'userEmail': TextEditingController(text: leg.vehicleUserEmail ?? ''),
-      'extraEmail': TextEditingController(text: leg.vehicleExtraEmail ?? ''),
-    };
-    final form = GlobalKey<FormState>();
-    String? email(String? v) =>
-        v == null || v.trim().isEmpty || RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v.trim()) ? null : 'Érvénytelen e-mail-cím';
-    Widget field(String key, String label, {TextInputType? keyboard, String? Function(String?)? validator, bool upper = false}) => TextFormField(
-          controller: fields[key],
-          decoration: InputDecoration(labelText: label),
-          keyboardType: keyboard,
-          textCapitalization: upper ? TextCapitalization.characters : TextCapitalization.sentences,
-          validator: validator,
-        );
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Autó adatai'),
-        content: Form(
-          key: form,
-          child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              field('plate', 'Rendszám', upper: true, validator: (v) => v == null || v.trim().isEmpty ? 'Kötelező' : null),
-              field('make', 'Gyártó'),
-              field('model', 'Modell'),
-              field('color', 'Szín'),
-              field('userName', 'Használó neve'),
-              field('userPhone', 'Használó telefonja', keyboard: TextInputType.phone),
-              field('userEmail', 'Használó e-mail', keyboard: TextInputType.emailAddress, validator: email),
-              field('extraEmail', 'További e-mail a jegyzőkönyvekhez', keyboard: TextInputType.emailAddress, validator: email),
-            ]),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
-          FilledButton(
-            onPressed: () {
-              if (form.currentState?.validate() ?? false) Navigator.pop(dialogContext, true);
-            },
-            child: const Text('Mentés'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) {
-      String t(String key) => fields[key]!.text.trim();
-      try {
-        final changed = await widget.services.work.updateLegVehicle(leg,
-            registrationNumber: t('plate').toUpperCase(),
-            make: t('make'), model: t('model'), color: t('color'),
-            userName: t('userName'), userPhone: t('userPhone'),
-            userEmail: t('userEmail'), extraEmail: t('extraEmail'));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(changed ? 'Mentve.' : 'Nem volt változás.')));
-        }
-        await _load(quiet: true);
-      } catch (e) {
-        if (mounted) setState(() => _error = '$e');
-      }
-    }
-    for (final c in fields.values) {
-      c.dispose();
-    }
+    if (await editLegData(context, widget.services, leg)) await _load(quiet: true);
   }
 
   /// A jobb felső menü pontjai (ha nincs egy sem, a menü nem jelenik meg).
   List<PopupMenuEntry<String>> _menuItems(DriverLeg leg) => [
     if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status))
-      const PopupMenuItem(value: 'vehicle', child: ListTile(leading: Icon(Icons.edit), title: Text('Autó adatai'))),
+      const PopupMenuItem(value: 'vehicle', child: ListTile(leading: Icon(Icons.edit), title: Text('Adatok módosítása'))),
     if (leg.status == 'ASSIGNED')
       const PopupMenuItem(value: 'time', child: ListTile(leading: Icon(Icons.schedule), title: Text('Felvétel időpontja'))),
     // Az elindult / teljesített út jegyzőkönyve akkor is megnézhető, ha már nincs a telefonon.
@@ -329,7 +260,18 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
           : SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: SizedBox(
+                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  // Az adatok javítása ott, ahol az átvétel / leadás gombja van.
+                  if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: OutlinedButton.icon(
+                        onPressed: _busy ? null : () => _editVehicle(leg),
+                        icon: const Icon(Icons.edit_note),
+                        label: const Text('Adatok módosítása (rendszám, autó, átvevő)'),
+                      ),
+                    ),
+                  SizedBox(
                   height: 60,
                   child: FilledButton.icon(
                     style: FilledButton.styleFrom(textStyle: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
@@ -338,6 +280,7 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                     label: Text(phase == 'PICKUP' ? 'Autó átvétele' : 'Autó leadása'),
                   ),
                 ),
+                ]),
               ),
             ),
     );

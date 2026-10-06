@@ -152,10 +152,12 @@ class WorkService extends ChangeNotifier {
   /// A sofőr javítja az út autójának adatait (rendszám, használó e-mail, további cím).
   /// Azonnal a telefonon, a szerverre a szinkron viszi (csak a módosított mezőket).
   Future<bool> updateLegVehicle(DriverLeg leg,
-      {String? registrationNumber, String? userEmail, String? extraEmail, String? make, String? model, String? color, String? userName, String? userPhone}) async {
+      {String? registrationNumber, String? userEmail, String? extraEmail, String? make, String? model, String? color, String? userName, String? userPhone,
+      String? fromContactName, String? fromContactPhone, String? toContactName, String? toContactPhone}) async {
     final changed = await local.updateLegVehicle(leg.legKey,
         registrationNumber: registrationNumber, userEmail: userEmail, extraEmail: extraEmail,
-        make: make, model: model, color: color, userName: userName, userPhone: userPhone);
+        make: make, model: model, color: color, userName: userName, userPhone: userPhone,
+        fromContactName: fromContactName, fromContactPhone: fromContactPhone, toContactName: toContactName, toContactPhone: toContactPhone);
     if (changed) {
       log.info('work', 'Autó adatai módosítva a telefonon: ${leg.legKey} (szinkronra vár)');
       notifyListeners();

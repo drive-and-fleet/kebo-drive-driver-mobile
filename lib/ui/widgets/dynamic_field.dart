@@ -93,7 +93,7 @@ class DynamicField extends StatelessWidget {
         return _ScalarTextField(
           label: label,
           helper: field.description,
-          initialValue: value?['value_number']?.toString() ?? '',
+          initialValue: numberText(value?['value_number']),
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           enabled: enabled,
           onChanged: (v) => onChanged({'value_number': v}, const []),
@@ -153,4 +153,20 @@ class _ScalarTextFieldState extends State<_ScalarTextField> {
       ),
     );
   }
+}
+
+/// A szám úgy, ahogy beírták: 12 és nem 12.0, 12,5 és nem 12.500 (a telefon és a
+/// szerver tizedes számként tárolja, visszatöltéskor ezt nem mutatjuk).
+String numberText(Object? raw) {
+  if (raw == null) return '';
+  final text = raw.toString().trim();
+  final parsed = raw is num ? raw.toDouble() : double.tryParse(text.replaceAll(',', '.'));
+  if (parsed == null || !parsed.isFinite) return text;
+  if (parsed == parsed.truncateToDouble()) return parsed.toInt().toString();
+  var s = parsed.toString();
+  if (s.contains('e') || s.contains('E')) return text;
+  while (s.endsWith('0')) {
+    s = s.substring(0, s.length - 1);
+  }
+  return s;
 }

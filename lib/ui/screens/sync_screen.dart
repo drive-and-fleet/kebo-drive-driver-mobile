@@ -2,6 +2,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/app_services.dart';
+import '../widgets/app_version.dart';
 
 class SyncScreen extends StatefulWidget {
   const SyncScreen({super.key, required this.services});
@@ -59,6 +60,8 @@ class _SyncScreenState extends State<SyncScreen> {
               const Divider(height: 32),
               Text('Bejelentkezve: ${widget.services.auth.session?.displayName ?? '-'}'),
               Text(widget.services.auth.session?.email ?? ''),
+              const SizedBox(height: 4),
+              const AppVersionText(),
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: () async {

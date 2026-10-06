@@ -81,7 +81,8 @@ class LocalRepository {
   /// közbeni módosítását ne írja felül. Több módosítás egy műveletbe olvad.
   /// Visszaadja, hogy volt-e változás.
   Future<bool> updateLegVehicle(String legKey,
-      {String? registrationNumber, String? userEmail, String? extraEmail, String? make, String? model, String? color, String? userName, String? userPhone}) async {
+      {String? registrationNumber, String? userEmail, String? extraEmail, String? make, String? model, String? color, String? userName, String? userPhone,
+      String? fromContactName, String? fromContactPhone, String? toContactName, String? toContactPhone}) async {
     final db = await _db;
     return db.transaction((txn) async {
       final rows = await txn.query('cached_leg', where: 'leg_key = ?', whereArgs: [legKey], limit: 1);
@@ -119,19 +120,41 @@ class LocalRepository {
         changes[key] = text(value);
         column[col] = text(value) ?? '';
       }
+      // Az út két megállójának kapcsolattartója (ki adja át / ki veszi át): csak ennél az útnál.
+      final legColumn = <String, String>{};
+      for (final (key, value, col) in [
+        ('fromContactName', fromContactName, 'from_contact_name'),
+        ('fromContactPhone', fromContactPhone, 'from_contact_phone'),
+        ('toContactName', toContactName, 'to_contact_name'),
+        ('toContactPhone', toContactPhone, 'to_contact_phone'),
+      ]) {
+        if (value == null || text(value) == text(current[col]?.toString())) continue;
+        changes[key] = text(value);
+        legColumn[col] = text(value) ?? '';
+      }
       if (changes.isEmpty) return false;
 
       final now = DateTime.now().toUtc().toIso8601String();
-      await txn.update('cached_leg', {
-        for (final entry in column.entries) entry.key: entry.value.isEmpty ? null : entry.value,
-        'updated_at': now,
-      }, where: 'order_vehicle_id = ?', whereArgs: [current['order_vehicle_id']]);
+      if (column.isNotEmpty) {
+        await txn.update('cached_leg', {
+          for (final entry in column.entries) entry.key: entry.value.isEmpty ? null : entry.value,
+          'updated_at': now,
+        }, where: 'order_vehicle_id = ?', whereArgs: [current['order_vehicle_id']]);
+      }
+      if (legColumn.isNotEmpty) {
+        await txn.update('cached_leg', {
+          for (final entry in legColumn.entries) entry.key: entry.value.isEmpty ? null : entry.value,
+          'updated_at': now,
+        }, where: 'leg_key = ?', whereArgs: [legKey]);
+      }
 
       // Még el nem indult művelet ugyanerre az autóra: a változások beleolvadnak.
+      // A kapcsolattartó útfüggő: azt csak ugyanennek az útnak a műveletébe olvasztjuk.
       final open = await txn.rawQuery('''
         SELECT op.id, op.payload FROM sync_operation op JOIN cached_leg leg ON leg.leg_key = op.leg_key
          WHERE op.operation_type = 'UPDATE_VEHICLE' AND op.state IN ('PENDING','ERROR','CONFLICT')
-           AND leg.order_vehicle_id = ? LIMIT 1''', [current['order_vehicle_id']]);
+           AND leg.order_vehicle_id = ? ${legColumn.isNotEmpty ? 'AND op.leg_key = ?' : ''} LIMIT 1''',
+          [current['order_vehicle_id'], if (legColumn.isNotEmpty) legKey]);
       if (open.isNotEmpty) {
         final merged = Map<String, dynamic>.from(jsonDecode('${open.first['payload'] ?? '{}'}') as Map)..addAll(changes);
         await txn.update('sync_operation', {'payload': jsonEncode(merged), 'state': 'PENDING', 'last_error': null, 'updated_at': now},
@@ -930,6 +953,50 @@ class LocalRepository {
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, where: 'local_id = ?', whereArgs: [localId]);
     });
+  }
+
+  /// Miért nincs aláírás (USER_ABSENT / NOT_POSSIBLE); null: aláírás kell. Csak a nyitott jegyzőkönyvön.
+  Future<void> setSignatureWaiver(String localId, String? waiver) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await _assertDraft(txn, localId);
+      await txn.update('local_inspection', {
+        'signature_waiver': waiver,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, where: 'local_id = ?', whereArgs: [localId]);
+    });
+  }
+
+  // ── kis állapotok (app_state) ──
+
+  Future<String?> appState(String key) async {
+    final db = await _db;
+    final rows = await db.query('app_state', columns: ['value'], where: 'key = ?', whereArgs: [key], limit: 1);
+    return rows.isEmpty ? null : rows.first['value']?.toString();
+  }
+
+  Future<void> setAppState(String key, String? value) async {
+    final db = await _db;
+    if (value == null) {
+      await db.delete('app_state', where: 'key = ?', whereArgs: [key]);
+    } else {
+      await db.insert('app_state', {'key': key, 'value': value}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  /// A telefonon lévő munka annak a sofőrnek a munkája, aki most belépett. Ha más sofőr munkája
+  /// maradt itt (kijelentkezés nélkül lépett be más), azt eldobja – feltöltetlen adat nélkül.
+  /// Igazat ad, ha törölt.
+  Future<bool> claimForDriver(String driverId) async {
+    final owner = await appState('owner_driver_id');
+    if (owner == driverId) return false;
+    var cleared = false;
+    if (owner != null && await pendingCount() == 0) {
+      await clearDriverData();
+      cleared = true;
+    }
+    if (owner == null || cleared) await setAppState('owner_driver_id', driverId);
+    return cleared;
   }
 
   Future<LocalInspectionDraft?> inspection(String localId) async {

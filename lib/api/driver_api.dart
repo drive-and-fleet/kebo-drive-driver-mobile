@@ -231,8 +231,11 @@ class DriverApi {
     }) as Map);
   }
 
-  Future<void> completeInspection(String inspectionId, {Map<String, double>? position}) async {
-    await _http.post('/api/v1/driver/inspections/$inspectionId/complete', token: await _token(), body: position ?? const <String, dynamic>{});
+  Future<void> completeInspection(String inspectionId, {Map<String, double>? position, String? signatureWaiver}) async {
+    await _http.post('/api/v1/driver/inspections/$inspectionId/complete', token: await _token(), body: <String, dynamic>{
+      ...?position,
+      if (signatureWaiver != null) 'signatureWaiver': signatureWaiver,
+    });
   }
 
   // ── push-értesítés és helyzetmegosztás ──

@@ -12,7 +12,7 @@ class LocalDatabase {
     final path = p.join(await getDatabasesPath(), 'fleet_driver.db');
     _db = await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _create,
       onUpgrade: _upgrade,
@@ -172,6 +172,7 @@ class LocalDatabase {
         copy_from_local_id TEXT,
         status TEXT NOT NULL,
         general_note TEXT,
+        signature_waiver TEXT,
         completed_latitude REAL,
         completed_longitude REAL,
         completed_accuracy REAL,
@@ -180,6 +181,7 @@ class LocalDatabase {
       )
     ''');
     await _createLocationPoint(db);
+    await _createAppState(db);
     await db.execute('''
       CREATE TABLE local_inspection_value (
         inspection_local_id TEXT NOT NULL,
@@ -330,6 +332,17 @@ class LocalDatabase {
       await db.execute('ALTER TABLE cached_leg ADD COLUMN form_type_id TEXT');
       await db.execute('ALTER TABLE cached_form_type ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0');
     }
+    if (oldVersion < 9) {
+      // Miért nincs aláírás (a használó nincs jelen / nincs rá lehetőség), és az app kis állapotai
+      // (kié a telefonon lévő munka, melyik fotó készül éppen).
+      await db.execute('ALTER TABLE local_inspection ADD COLUMN signature_waiver TEXT');
+      await _createAppState(db);
+    }
+  }
+
+  /// Kulcs–érték: a telefonon lévő munka gazdája (sofőr), a folyamatban lévő fotózás.
+  Future<void> _createAppState(Database db) async {
+    await db.execute('CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT)');
   }
 
   Future<void> close() async {

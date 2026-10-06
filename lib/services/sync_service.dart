@@ -345,7 +345,8 @@ class SyncService extends ChangeNotifier {
     }
 
     // Hol volt a telefon a lezáráskor: a pont nélküli megálló innen kap térképi pontot.
-    await api.completeInspection(serverId, position: await local.inspectionCompletionPosition(localId));
+    await api.completeInspection(serverId,
+        position: await local.inspectionCompletionPosition(localId), signatureWaiver: (await local.inspection(localId))?.signatureWaiver);
     log.info('sync', 'Jegyzőkönyv lezárva a szerveren: $serverId');
   }
 

@@ -46,8 +46,9 @@ class InspectionValidator {
 
     // Aláírás nélkül nem zárható le: az átadó (átvételnél) vagy az átvevő (leadásnál)
     // szignója igazolja a jegyzőkönyvet. A szerver ugyanezt ellenőrzi.
+    // Kivétel, ha megadták, miért nincs: a használó nincs jelen, vagy nincs rá lehetőség.
     final signatures = await _local.signatures(draft.localId);
-    if (signatures.isEmpty) {
+    if (signatures.isEmpty && draft.signatureWaiver == null) {
       errors.add(draft.inspectionType == 'PICKUP'
           ? 'Hiányzó aláírás: az átadó szignója kötelező (Szignó gomb).'
           : 'Hiányzó aláírás: az átvevő szignója kötelező (Szignó gomb).');
