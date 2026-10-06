@@ -265,7 +265,8 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
                   if (const {'ASSIGNED', 'IN_PROGRESS', 'COMPLETED_PENDING_SYNC'}.contains(leg.status))
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: OutlinedButton.icon(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(backgroundColor: AppColors.signalYellow, foregroundColor: AppColors.ink900, minimumSize: const Size.fromHeight(46)),
                         onPressed: _busy ? null : () => _editVehicle(leg),
                         icon: const Icon(Icons.edit_note),
                         label: const Text('Adatok módosítása (rendszám, autó, átvevő)'),

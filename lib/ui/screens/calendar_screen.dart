@@ -6,7 +6,6 @@ import '../../models/local_models.dart';
 import '../../models/models.dart';
 import '../../services/app_services.dart';
 import '../theme.dart';
-import '../widgets/leg_card.dart';
 import 'leg_detail_screen.dart';
 
 const _months = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
@@ -97,6 +96,13 @@ class CalendarScreenState extends State<CalendarScreen> {
     return list;
   }
 
+  /// A sofőr fuvarjai a hét / hónap napjain (a lemondottak és a már nem az övéi nélkül).
+  List<DriverLeg> _inRange(DateTime from, DateTime to) => _legs.where((l) {
+        if (l.status == 'REVOKED' || l.status == 'CANCELLED' || l.plannedStart == null) return false;
+        final d = _day(l.plannedStart!.toLocal());
+        return !d.isBefore(from) && d.isBefore(to);
+      }).toList();
+
   Future<void> _openDay(DateTime day) async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => DayScreen(services: widget.services, day: day)));
     await _reload();
@@ -140,6 +146,7 @@ class CalendarScreenState extends State<CalendarScreen> {
             IconButton(onPressed: () => _step(1), icon: const Icon(Icons.chevron_right), tooltip: 'Következő'),
           ]),
           if (_loading) const LinearProgressIndicator(),
+          _PeriodSummary(legs: _inRange(from, to), month: _month),
           if (!_month)
             for (var d = from; d.isBefore(to); d = d.add(const Duration(days: 1))) _WeekRow(day: d, today: d == today, legs: _on(d), onTap: () => _openDay(d))
           else
@@ -292,6 +299,15 @@ class _DayScreenState extends State<DayScreen> {
     if (mounted) setState(() { _legs = legs; _states = states; });
   }
 
+  /// A nap utai megrendelésenként, a csoportok az első útjuk ideje szerint.
+  List<List<DriverLeg>> _groups() {
+    final byOrder = <String, List<DriverLeg>>{};
+    for (final leg in _legs) {
+      byOrder.putIfAbsent(leg.orderNo, () => []).add(leg);
+    }
+    return byOrder.values.map((g) => g..sort((a, b) => a.sequenceNo.compareTo(b.sequenceNo))).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = widget.day;
@@ -302,17 +318,113 @@ class _DayScreenState extends State<DayScreen> {
           : ListView(
               padding: const EdgeInsets.all(12),
               children: [
-                for (final leg in _legs)
-                  LegCard(
-                    leg: leg,
-                    syncState: _states[leg.legKey],
-                    onTap: () async {
+                // Megrendelésenként egy csoport: a bal oldali vonal köti össze az egy megrendeléshez
+                // tartozó utakat (pl. körfuvar oda- és visszaútja), visszafogott, megrendelésenként azonos színnel.
+                for (final (index, group) in _groups().indexed)
+                  _OrderGroup(
+                    legs: group,
+                    color: _groupColors[index % _groupColors.length],
+                    states: _states,
+                    onOpen: (leg) async {
                       await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LegDetailScreen(services: widget.services, legKey: leg.legKey)));
                       await _load();
                     },
                   ),
               ],
             ),
+    );
+  }
+}
+
+/// Visszafogott színek a megrendelés-csoportok vonalához (nem színes az egész lista).
+const _groupColors = [Color(0xFF14547A), Color(0xFF6B7F8C), Color(0xFF2F6F5E), Color(0xFF8A6A3B), Color(0xFF5B4F7A)];
+
+/// Egy megrendelés utai egy napon: bal oldalt egy vonal, alatta tömör sorok.
+class _OrderGroup extends StatelessWidget {
+  const _OrderGroup({required this.legs, required this.color, required this.states, required this.onOpen});
+  final List<DriverLeg> legs;
+  final Color color;
+  final Map<String, LegSyncState> states;
+  final Future<void> Function(DriverLeg leg) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.sheet000,
+        border: Border(left: BorderSide(color: color, width: 4), top: const BorderSide(color: AppColors.rule), right: const BorderSide(color: AppColors.rule), bottom: const BorderSide(color: AppColors.rule)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+          child: Text('${legs.first.registrationNumber} · ${legs.first.orderNo}',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+        ),
+        for (final (i, leg) in legs.indexed) ...[
+          if (i > 0) const Divider(height: 1, indent: 10),
+          InkWell(
+            onTap: () => onOpen(leg),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(
+                  width: 46,
+                  child: Text(leg.plannedStart == null ? '–' : _hm(leg.plannedStart!),
+                      style: const TextStyle(fontSize: AppText.body, fontWeight: FontWeight.w700)),
+                ),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('${leg.fromPlace} → ${leg.toPlace}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15)),
+                    Text('${leg.sequenceNo}. út · ${_statusText(leg.status)}${states[leg.legKey] == null ? '' : ' · szinkronra vár'}',
+                        style: const TextStyle(fontSize: 13, color: AppColors.ink600)),
+                  ]),
+                ),
+                const Icon(Icons.chevron_right, color: AppColors.ink400),
+              ]),
+            ),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  static String _statusText(String value) => switch (value) {
+        'PLANNED' => 'tervezett',
+        'ASSIGNED' => 'kiosztva',
+        'IN_PROGRESS' => 'folyamatban',
+        'COMPLETED_PENDING_SYNC' => 'kész, szinkronra vár',
+        'COMPLETED' => 'teljesítve',
+        'CANCELLED' => 'lemondva',
+        _ => value,
+      };
+}
+
+/// A hét / hónap összesítője: hány fuvar, ebből mennyi teljesítve és mennyi van hátra.
+class _PeriodSummary extends StatelessWidget {
+  const _PeriodSummary({required this.legs, required this.month});
+  final List<DriverLeg> legs;
+  final bool month;
+
+  @override
+  Widget build(BuildContext context) {
+    final done = legs.where((l) => l.status == 'COMPLETED' || l.status == 'COMPLETED_PENDING_SYNC').length;
+    final left = legs.length - done;
+    Widget figure(String value, String label) => Expanded(
+          child: Column(children: [
+            Text(value, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.ink900)),
+            Text(label, style: const TextStyle(fontSize: 13, color: AppColors.ink600)),
+          ]),
+        );
+    return Container(
+      margin: const EdgeInsets.fromLTRB(0, 6, 0, 10),
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(color: AppColors.sheet050, border: Border.all(color: AppColors.rule)),
+      child: Column(children: [
+        Text(month ? 'Ebben a hónapban' : 'Ezen a héten', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.ink600)),
+        const SizedBox(height: 4),
+        Row(children: [figure('${legs.length}', 'fuvar'), figure('$done', 'teljesítve'), figure('$left', 'hátra')]),
+      ]),
     );
   }
 }

@@ -56,7 +56,7 @@ class LegCard extends StatelessWidget {
                 child: SyncBadge(syncState),
               ),
               const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider(height: 1)),
-              _AddressLine(icon: Icons.trip_origin, label: leg.fromStopTypeName ?? (leg.isReturn ? 'Visszaindulás' : 'Felvétel'), address: leg.fromPlace, time: leg.plannedStart),
+              _AddressLine(icon: Icons.trip_origin, label: leg.fromLabel, note: leg.fromNote, address: leg.fromPlace, time: leg.plannedStart),
               const SizedBox(height: 6),
               _AddressLine(icon: leg.isOutbound ? Icons.hourglass_top : Icons.flag_outlined, label: leg.toStopTypeName ?? (leg.isOutbound ? 'Várakozás' : 'Leadás'), address: leg.toPlace, time: leg.plannedEnd),
               const SizedBox(height: 10),
@@ -87,9 +87,11 @@ class LegCard extends StatelessWidget {
 }
 
 class _AddressLine extends StatelessWidget {
-  const _AddressLine({required this.icon, required this.label, required this.address, this.time});
+  const _AddressLine({required this.icon, required this.label, required this.address, this.time, this.note});
   final IconData icon;
   final String label;
+  /// Kis megjegyzés a felirat után (pl. „korábban itt hagyott autó”).
+  final String? note;
   final String address;
   final DateTime? time;
 
@@ -101,6 +103,7 @@ class _AddressLine extends StatelessWidget {
       Expanded(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('$label: $address', style: const TextStyle(fontSize: AppText.body)),
+          if (note != null) Text(note!, style: const TextStyle(fontSize: 13, color: AppColors.ink400, fontStyle: FontStyle.italic)),
           if (time != null) Text(_date(time!), style: const TextStyle(fontSize: 13, color: AppColors.ink600)),
         ]),
       ),

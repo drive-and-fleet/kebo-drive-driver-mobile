@@ -8,6 +8,7 @@ import '../local/local_repository.dart';
 import '../logging/app_log.dart';
 import '../services/app_services.dart';
 import 'leg_flow.dart';
+import 'screens/camera_screen.dart';
 
 /// Melyik fotóhelyre készül a kép: egy jegyzőkönyv általános fotója vagy egy sérülésé.
 class PendingCapture {
@@ -33,10 +34,15 @@ class PendingCapture {
 
 const _pendingKey = 'pending_capture';
 
-/// Fotó a kamerával. A kamera külön alkalmazás: közben az Android leállíthatja az appot
-/// (kevés memória). Ezért előtte feljegyezzük, hova kerül a kép; ha az app újraindul,
-/// [recoverPendingCapture] átveszi az Android által megőrzött fotót, és visszanyitja a jegyzőkönyvet.
-Future<XFile?> capturePhoto(AppServices services, PendingCapture target) async {
+/// Fotó. Elsőként az app saját kamerája ([CameraScreen]): az appon belül marad, így az Android
+/// nem állítja le közben. Ha az nem indul (engedély, nincs kamera), a telefon kamera-alkalmazása
+/// jön – az alatt az Android leállíthatja az appot, ezért előtte feljegyezzük, hova kerül a kép;
+/// újraindulás után [recoverPendingCapture] átveszi a megőrzött fotót, és visszanyitja a jegyzőkönyvet.
+Future<XFile?> capturePhoto(BuildContext context, AppServices services, PendingCapture target, {String title = 'Fotó'}) async {
+  final result = await Navigator.of(context).push<Object?>(MaterialPageRoute(builder: (_) => CameraScreen(title: title)));
+  if (result is XFile) return result;
+  if (result is! CameraUnavailable) return null;
+  log.info('insp', 'Az app kamerája nem érhető el (${result.reason}): a telefon kamera-alkalmazása nyílik');
   await services.local.setAppState(_pendingKey, jsonEncode(target.toJson()));
   try {
     return await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85, maxWidth: 2000);

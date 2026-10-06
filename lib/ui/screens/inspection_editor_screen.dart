@@ -161,8 +161,8 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   }
 
   Future<void> _takeGeneralPhoto(String type) async {
-    final image = await capturePhoto(widget.services,
-        PendingCapture(draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: type));
+    final image = await capturePhoto(context, widget.services,
+        PendingCapture(draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: type), title: type);
     if (image == null) {
       log.debug('insp', 'Fotó megszakítva: $type');
       return;
@@ -176,22 +176,40 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
   /// nem kötelező – üresen a helyből és a típusból áll össze –, de valamit meg kell adni;
   /// ha nincs semmi, az űrlap kiírja, és nyitva marad.
   Future<void> _addDamage() async {
-    final result = await Navigator.of(context).push<_DamageInput>(MaterialPageRoute(fullscreenDialog: true, builder: (_) => const _DamageForm()));
+    final result = await Navigator.of(context).push<_DamageInput>(MaterialPageRoute(
+        fullscreenDialog: true, builder: (_) => _DamageForm(takePhoto: _photoForNewDamage, discardPhoto: widget.services.fileStore.deleteIfExists)));
     if (result == null) return;
     log.info('insp', 'Sérülés rögzítve: ${result.location ?? '-'} / ${result.type ?? '-'} / ${result.severity ?? '-'}${result.preexisting ? ' (korábbi)' : ''} (${widget.draftId})');
-    await _guard(() => widget.services.local.addDamage(
-          inspectionLocalId: widget.draftId,
-          description: result.description,
-          location: result.location,
-          damageType: result.type,
-          severity: result.severity,
-          isPreexisting: result.preexisting,
-        ));
+    await _guard(() async {
+      final damage = await widget.services.local.addDamage(
+        inspectionLocalId: widget.draftId,
+        description: result.description,
+        location: result.location,
+        damageType: result.type,
+        severity: result.severity,
+        isPreexisting: result.preexisting,
+      );
+      // Az űrlapon készült fotók ehhez a sérüléshez.
+      for (final path in result.photoPaths) {
+        await widget.services.local.addPhoto(inspectionLocalId: widget.draftId, photoType: 'DAMAGE', localPath: path, damageLocalId: damage.localId);
+      }
+      if (result.photoPaths.isNotEmpty) log.info('insp', 'Sérülésfotó készült az űrlapon: ${result.photoPaths.length} db (${widget.draftId})');
+    });
+  }
+
+  /// Fotó egy még nem mentett sérüléshez (a sérülés űrlapján): a telefonra mentve, az útvonala jön vissza.
+  Future<String?> _photoForNewDamage() async {
+    final image = await capturePhoto(context, widget.services,
+        PendingCapture(draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: 'DAMAGE'),
+        title: 'Sérülés fotója');
+    if (image == null) return null;
+    return widget.services.fileStore.persistImage(image.path);
   }
 
   Future<void> _takeDamagePhoto(LocalDamage damage) async {
-    final image = await capturePhoto(widget.services, PendingCapture(
-        draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: 'DAMAGE', damageLocalId: damage.localId));
+    final image = await capturePhoto(context, widget.services, PendingCapture(
+        draftId: widget.draftId, legKey: widget.leg.legKey, phase: _draft?.inspectionType ?? 'PICKUP', photoType: 'DAMAGE', damageLocalId: damage.localId),
+        title: 'Sérülés fotója');
     if (image == null) return;
     final path = await widget.services.fileStore.persistImage(image.path);
     log.info('insp', 'Sérülésfotó készült: ${damage.localId} (${widget.draftId})');
@@ -507,10 +525,20 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
       appBar: AppBar(title: Text(phase == 'PICKUP' ? 'Átvételi jegyzőkönyv' : 'Leadási jegyzőkönyv'), actions: [
         // Az autó / átvevő adatainak javítása a jegyzőkönyvből is (megerősítés után).
         if (open)
-          TextButton.icon(onPressed: _editData, icon: const Icon(Icons.edit_note), label: const Text('Adatok')),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.signalYellow, foregroundColor: AppColors.ink900, visualDensity: VisualDensity.compact),
+              onPressed: _editData,
+              icon: const Icon(Icons.edit_note),
+              label: const Text('Adatok'),
+            ),
+          ),
       ]),
       floatingActionButton: open && !_finalizing
           ? FloatingActionButton.extended(
+              backgroundColor: AppColors.signalGreen,
+              foregroundColor: Colors.white,
               onPressed: _confirmFinalize,
               icon: const Icon(Icons.check),
               label: Text(phase == 'PICKUP' ? 'Átvettem – lezárás' : 'Leadtam – lezárás'),
@@ -571,7 +599,12 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                 const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Sérülések', style: Theme.of(context).textTheme.titleLarge),
-                  FilledButton.tonalIcon(onPressed: _mediaLocked ? null : _addDamage, icon: const Icon(Icons.add), label: const Text('Sérülés')),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.signalRed, foregroundColor: Colors.white),
+                    onPressed: _mediaLocked ? null : _addDamage,
+                    icon: const Icon(Icons.car_crash),
+                    label: const Text('+ Sérülés'),
+                  ),
                 ]),
                 const SizedBox(height: 6),
                 if (_damages.isEmpty) const Text('Nincs rögzített sérülés.'),
@@ -607,7 +640,8 @@ class _InspectionEditorScreenState extends State<InspectionEditorScreen> {
                 const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Kézi szignó', style: Theme.of(context).textTheme.titleLarge),
-                  FilledButton.tonalIcon(
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.signalYellow, foregroundColor: AppColors.ink900),
                     onPressed: _mediaLocked ? null : _addSignature,
                     icon: const Icon(Icons.draw),
                     label: Text(_signatures.isEmpty ? 'Szignó' : 'Szignó cseréje'),
@@ -706,7 +740,8 @@ class _PhotoStrip extends StatelessWidget {
 }
 
 class _DamageInput {
-  const _DamageInput({required this.description, this.location, this.type, this.severity, this.preexisting = false});
+  const _DamageInput({required this.description, this.location, this.type, this.severity, this.preexisting = false, this.photoPaths = const []});
+  final List<String> photoPaths;
   final String description;
   final String? location;
   final String? type;
@@ -716,7 +751,10 @@ class _DamageInput {
 
 /// Egy sérülés adatai, saját képernyőn.
 class _DamageForm extends StatefulWidget {
-  const _DamageForm();
+  const _DamageForm({required this.takePhoto, required this.discardPhoto});
+  /// Fotó a sérülésről (az app kamerája); a telefonra mentett kép útvonala, vagy null.
+  final Future<String?> Function() takePhoto;
+  final Future<void> Function(String path) discardPhoto;
   @override
   State<_DamageForm> createState() => _DamageFormState();
 }
@@ -728,11 +766,24 @@ class _DamageFormState extends State<_DamageForm> {
   String? _severity;
   bool _preexisting = false;
   String? _error;
+  final List<String> _photos = [];
+  bool _saved = false;
 
   @override
   void dispose() {
     _description.dispose();
+    // Kilépett mentés nélkül: az itt készült fotók nem maradnak a telefonon.
+    if (!_saved) {
+      for (final path in _photos) {
+        widget.discardPhoto(path);
+      }
+    }
     super.dispose();
+  }
+
+  Future<void> _addPhoto() async {
+    final path = await widget.takePhoto();
+    if (path != null && mounted) setState(() { _photos.add(path); _error = null; });
   }
 
   void _save() {
@@ -742,7 +793,9 @@ class _DamageFormState extends State<_DamageForm> {
       return;
     }
     final description = text.isNotEmpty ? text : [_type, _location].whereType<String>().join(', ');
-    Navigator.of(context).pop(_DamageInput(description: description, location: _location, type: _type, severity: _severity, preexisting: _preexisting));
+    _saved = true;
+    Navigator.of(context).pop(_DamageInput(
+        description: description, location: _location, type: _type, severity: _severity, preexisting: _preexisting, photoPaths: List.of(_photos)));
   }
 
   @override
@@ -788,6 +841,32 @@ class _DamageFormState extends State<_DamageForm> {
             value: _preexisting,
             onChanged: (v) => setState(() => _preexisting = v ?? false),
           ),
+          const SizedBox(height: 8),
+          // Fotó rögtön itt, a sérülés felvételekor.
+          OutlinedButton.icon(
+            onPressed: _addPhoto,
+            icon: const Icon(Icons.add_a_photo),
+            label: Text(_photos.isEmpty ? 'Fotó a sérülésről' : 'Még egy fotó (${_photos.length} kész)'),
+          ),
+          if (_photos.isNotEmpty) Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final path in _photos)
+                Stack(children: [
+                  ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(path), width: 96, height: 96, fit: BoxFit.cover)),
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: IconButton.filledTonal(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Fotó törlése',
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: () { setState(() => _photos.remove(path)); widget.discardPhoto(path); },
+                    ),
+                  ),
+                ]),
+            ]),
+          ),
           if (_error != null) Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(_error!, style: const TextStyle(color: AppColors.signalRed, fontWeight: FontWeight.w600)),
@@ -795,7 +874,7 @@ class _DamageFormState extends State<_DamageForm> {
           const SizedBox(height: 16),
           FilledButton.icon(onPressed: _save, icon: const Icon(Icons.check), label: const Text('Sérülés mentése')),
           const SizedBox(height: 8),
-          const Text('Utána a sérülés kártyáján a „Fotó” gombbal készíts róla képet.', style: TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
+          const Text('Fotó később is adható a sérülés kártyáján.', style: TextStyle(fontSize: AppText.secondary, color: AppColors.ink600)),
         ]),
       ),
     );

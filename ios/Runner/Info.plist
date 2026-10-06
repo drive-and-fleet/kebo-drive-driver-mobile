@@ -66,6 +66,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Az app nem rögzít hangot; a kamera használatához az iOS ezt a leírást kéri.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>A jegyzőkönyvhöz az autóról és a sérülésekről fotót készítesz.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

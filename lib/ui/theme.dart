@@ -29,6 +29,8 @@ class AppColors {
   static const tintRed = Color(0xFFFBECEB);
   static const signalAmber = Color(0xFFB5730A);
   static const tintAmber = Color(0xFFFBF2E2);
+  /// Sárga gomb (szignó, adatok módosítása): sötét felirattal olvasható.
+  static const signalYellow = Color(0xFFF5C518);
   static const signalGreen = Color(0xFF15704C);
   static const tintGreen = Color(0xFFE7F2ED);
   static const signalBlue = Color(0xFF14547A);

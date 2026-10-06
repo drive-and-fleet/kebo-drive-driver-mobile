@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Push-értesítés (Android 13+ engedélyt kér). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Helyzetmegosztás fuvar közben: előtérszolgáltatás állandó értesítéssel, háttér-helyengedély nélkül. -->

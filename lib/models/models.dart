@@ -158,6 +158,16 @@ class DriverLeg {
   /// Körfuvar visszaútja: a várakozó megállóból indul.
   bool get isReturn => fromStopWaits ?? fromStopType == 'WAIT';
 
+  /// Az út egy korábbi út végpontjából indul (pl. körfuvar visszaútja): ott már csak felvétel van,
+  /// a megálló típusa („Leadás, majd felvétel később ugyanitt”) itt nem mond semmit.
+  bool get startsMidRoute => sequenceNo > 1;
+
+  /// Az indulás felirata a sofőrnek.
+  String get fromLabel => startsMidRoute ? 'Felvétel' : (fromStopTypeName ?? 'Felvétel');
+
+  /// Kis megjegyzés az indulásnál, ha az autó egy korábbi útról van ott.
+  String? get fromNote => !startsMidRoute ? null : (fromStopWaits == true ? 'itt várta meg a sofőr' : 'korábban itt hagyott autó');
+
   factory DriverLeg.fromJson(Map<String, dynamic> json) => DriverLeg(
         legId: json['legId']?.toString(),
         legKey: '${json['legKey']}',

@@ -13,7 +13,7 @@ Future<bool> editLegData(BuildContext context, AppServices services, DriverLeg l
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: const Text('Adatok módosítása'),
-      content: const Text('Biztosan módosítani szeretnéd a fuvar adatait (rendszám, autó, használó, kapcsolattartó)? '
+      content: Text('Biztosan módosítani szeretnéd a fuvar adatait (${leg.startsMidRoute ? '' : 'rendszám, autó, '}használó, kapcsolattartó)? '
           'Minden módosítás naplózva van, az iroda látja.'),
       actions: [
         TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Mégse')),
@@ -40,9 +40,14 @@ Future<bool> editLegData(BuildContext context, AppServices services, DriverLeg l
   final form = GlobalKey<FormState>();
   String? email(String? v) =>
       v == null || v.trim().isEmpty || RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v.trim()) ? null : 'Érvénytelen e-mail-cím';
-  Widget field(String key, String label, {TextInputType? keyboard, String? Function(String?)? validator, bool upper = false}) => TextFormField(
+  // Egy korábbi út után (pl. körfuvar visszaútja) az autó már ugyanaz: a rendszám, gyártó,
+  // modell és szín itt nem módosítható (a szerver sem engedi), csak az első úton.
+  final carLocked = leg.startsMidRoute;
+  Widget field(String key, String label, {TextInputType? keyboard, String? Function(String?)? validator, bool upper = false, bool locked = false}) => TextFormField(
         controller: fields[key],
-        decoration: InputDecoration(labelText: label),
+        readOnly: locked,
+        enabled: !locked,
+        decoration: InputDecoration(labelText: label, suffixIcon: locked ? const Icon(Icons.lock_outline, size: 18) : null),
         keyboardType: keyboard,
         textCapitalization: upper ? TextCapitalization.characters : TextCapitalization.sentences,
         validator: validator,
@@ -65,10 +70,16 @@ Future<bool> editLegData(BuildContext context, AppServices services, DriverLeg l
           key: form,
           child: ListView(padding: const EdgeInsets.all(16), children: [
             section('Autó'),
-            field('plate', 'Rendszám', upper: true, validator: (v) => v == null || v.trim().isEmpty ? 'Kötelező' : null),
-            field('make', 'Gyártó'),
-            field('model', 'Modell (típus)'),
-            field('color', 'Szín'),
+            if (carLocked)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 4),
+                child: Text('Ez az út egy korábbi folytatása: az autó adatai itt nem módosíthatók, csak az első úton.',
+                    style: TextStyle(fontSize: 13, color: Colors.black54)),
+              ),
+            field('plate', 'Rendszám', upper: true, locked: carLocked, validator: (v) => v == null || v.trim().isEmpty ? 'Kötelező' : null),
+            field('make', 'Gyártó', locked: carLocked),
+            field('model', 'Modell (típus)', locked: carLocked),
+            field('color', 'Szín', locked: carLocked),
             section('Átadó – ${leg.fromPlace}'),
             field('fromContactName', 'Kapcsolattartó neve'),
             field('fromContactPhone', 'Kapcsolattartó telefonja', keyboard: TextInputType.phone),
@@ -96,8 +107,8 @@ Future<bool> editLegData(BuildContext context, AppServices services, DriverLeg l
     String t(String key) => fields[key]!.text.trim();
     try {
       changed = await services.work.updateLegVehicle(leg,
-          registrationNumber: t('plate').toUpperCase(),
-          make: t('make'), model: t('model'), color: t('color'),
+          registrationNumber: carLocked ? null : t('plate').toUpperCase(),
+          make: carLocked ? null : t('make'), model: carLocked ? null : t('model'), color: carLocked ? null : t('color'),
           userName: t('userName'), userPhone: t('userPhone'),
           userEmail: t('userEmail'), extraEmail: t('extraEmail'),
           fromContactName: t('fromContactName'), fromContactPhone: t('fromContactPhone'),
