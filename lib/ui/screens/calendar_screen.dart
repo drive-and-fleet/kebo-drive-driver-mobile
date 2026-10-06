@@ -339,7 +339,8 @@ class _DayScreenState extends State<DayScreen> {
 /// Visszafogott színek a megrendelés-csoportok vonalához (nem színes az egész lista).
 const _groupColors = [Color(0xFF14547A), Color(0xFF6B7F8C), Color(0xFF2F6F5E), Color(0xFF8A6A3B), Color(0xFF5B4F7A)];
 
-/// Egy megrendelés utai egy napon: bal oldalt egy vonal, alatta tömör sorok.
+/// Egy megrendelés utai egy napon: fölötte a rendszám és a megrendelés, a dobozon bal oldalt
+/// egy vonal köti össze az utakat; a sorok egyforma magasak.
 class _OrderGroup extends StatelessWidget {
   const _OrderGroup({required this.legs, required this.color, required this.states, required this.onOpen});
   final List<DriverLeg> legs;
@@ -349,55 +350,85 @@ class _OrderGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: AppColors.sheet000,
-        border: Border(left: BorderSide(color: color, width: 4), top: const BorderSide(color: AppColors.rule), right: const BorderSide(color: AppColors.rule), bottom: const BorderSide(color: AppColors.rule)),
-      ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+          padding: const EdgeInsets.only(left: 2, bottom: 4),
           child: Text('${legs.first.registrationNumber} · ${legs.first.orderNo}',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color, letterSpacing: 0.3)),
         ),
-        for (final (i, leg) in legs.indexed) ...[
-          if (i > 0) const Divider(height: 1, indent: 10),
-          InkWell(
-            onTap: () => onOpen(leg),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                SizedBox(
-                  width: 46,
-                  child: Text(leg.plannedStart == null ? '–' : _hm(leg.plannedStart!),
-                      style: const TextStyle(fontSize: AppText.body, fontWeight: FontWeight.w700)),
-                ),
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('${leg.fromPlace} → ${leg.toPlace}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15)),
-                    Text('${leg.sequenceNo}. út · ${_statusText(leg.status)}${states[leg.legKey] == null ? '' : ' · szinkronra vár'}',
-                        style: const TextStyle(fontSize: 13, color: AppColors.ink600)),
-                  ]),
-                ),
-                const Icon(Icons.chevron_right, color: AppColors.ink400),
-              ]),
-            ),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.sheet000,
+            border: Border(left: BorderSide(color: color, width: 4), top: const BorderSide(color: AppColors.rule),
+                right: const BorderSide(color: AppColors.rule), bottom: const BorderSide(color: AppColors.rule)),
           ),
-        ],
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            for (final (i, leg) in legs.indexed) ...[
+              if (i > 0) const Divider(height: 1, indent: 10),
+              InkWell(
+                onTap: () => onOpen(leg),
+                child: SizedBox(
+                  height: 64,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+                    child: Row(children: [
+                      SizedBox(
+                        width: 48,
+                        child: Text(leg.plannedStart == null ? '–' : _hm(leg.plannedStart!),
+                            style: const TextStyle(fontSize: AppText.body, fontWeight: FontWeight.w700)),
+                      ),
+                      Expanded(
+                        child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('${leg.fromPlace} → ${leg.toPlace}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15)),
+                          const SizedBox(height: 4),
+                          Row(children: [
+                            Text('${leg.sequenceNo}. út', style: const TextStyle(fontSize: 13, color: AppColors.ink600)),
+                            const SizedBox(width: 8),
+                            _StatusChip(status: leg.status),
+                            if (states[leg.legKey] != null) ...[
+                              const SizedBox(width: 6),
+                              const Icon(Icons.cloud_upload_outlined, size: 16, color: AppColors.signalAmber),
+                            ],
+                          ]),
+                        ]),
+                      ),
+                      const Icon(Icons.chevron_right, color: AppColors.ink400),
+                    ]),
+                  ),
+                ),
+              ),
+            ],
+          ]),
+        ),
       ]),
     );
   }
+}
 
-  static String _statusText(String value) => switch (value) {
-        'PLANNED' => 'tervezett',
-        'ASSIGNED' => 'kiosztva',
-        'IN_PROGRESS' => 'folyamatban',
-        'COMPLETED_PENDING_SYNC' => 'kész, szinkronra vár',
-        'COMPLETED' => 'teljesítve',
-        'CANCELLED' => 'lemondva',
-        _ => value,
-      };
+/// Az út állapota kiemelve: saját háttérrel, hogy ne olvadjon bele a listába.
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.status});
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final (text, fg, bg) = switch (status) {
+      'COMPLETED' => ('teljesítve', AppColors.signalGreen, AppColors.tintGreen),
+      'COMPLETED_PENDING_SYNC' => ('kész, szinkronra vár', AppColors.signalAmber, AppColors.tintAmber),
+      'IN_PROGRESS' => ('folyamatban', AppColors.signalBlue, AppColors.tintBlue),
+      'ASSIGNED' => ('kiosztva', AppColors.ink900, AppColors.sheet100),
+      'PLANNED' => ('tervezett', AppColors.ink900, AppColors.sheet100),
+      'CANCELLED' => ('lemondva', AppColors.signalRed, AppColors.tintRed),
+      _ => (status, AppColors.ink900, AppColors.sheet100),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+      child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
+    );
+  }
 }
 
 /// A hét / hónap összesítője: hány fuvar, ebből mennyi teljesítve és mennyi van hátra.

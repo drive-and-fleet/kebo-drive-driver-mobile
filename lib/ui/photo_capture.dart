@@ -8,6 +8,7 @@ import '../local/local_repository.dart';
 import '../logging/app_log.dart';
 import '../services/app_services.dart';
 import 'leg_flow.dart';
+import 'permissions.dart';
 import 'screens/camera_screen.dart';
 
 /// Melyik fotóhelyre készül a kép: egy jegyzőkönyv általános fotója vagy egy sérülésé.
@@ -39,6 +40,8 @@ const _pendingKey = 'pending_capture';
 /// jön – az alatt az Android leállíthatja az appot, ezért előtte feljegyezzük, hova kerül a kép;
 /// újraindulás után [recoverPendingCapture] átveszi a megőrzött fotót, és visszanyitja a jegyzőkönyvet.
 Future<XFile?> capturePhoto(BuildContext context, AppServices services, PendingCapture target, {String title = 'Fotó'}) async {
+  // Engedély nélkül újra kérjük (ha végleg tiltva, a beállításokhoz visz).
+  if (!await ensureCameraPermission(context) || !context.mounted) return null;
   final result = await Navigator.of(context).push<Object?>(MaterialPageRoute(builder: (_) => CameraScreen(title: title)));
   if (result is XFile) return result;
   if (result is! CameraUnavailable) return null;

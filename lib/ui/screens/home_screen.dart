@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../permissions.dart';
 import '../photo_capture.dart';
 
 import '../../models/models.dart';
@@ -18,7 +19,7 @@ import 'transfers_screen.dart';
 import '../../logging/app_log.dart';
 import 'bug_report_screen.dart';
 
-const _tabs = ['Fuvarjaim', 'Előjegyzés', 'Szabad fuvarok'];
+const _tabs = ['Fuvarjaim', 'Előjegyzés / Történet', 'Szabad fuvarok'];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.services});
@@ -84,6 +85,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       // A kamera idejére leállt az app: a fotó a helyére, a jegyzőkönyv újra megnyílik.
       if (mounted) await recoverPendingCapture(context, widget.services);
+      // A szükséges engedélyek már induláskor (kamera, helyzet; az értesítést a push kéri).
+      if (mounted) await requestStartupPermissions(context, widget.services.local);
       if (!mounted) return;
       // Indításkor (és belépés után) azonnal a szerverről: a rám osztott fuvarok, és ami a telefonon feltöltésre vár.
       unawaited(_todayKey.currentState?.refresh());
@@ -213,7 +216,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.today_outlined), selectedIcon: Icon(Icons.today), label: 'Fuvarjaim'),
-          NavigationDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: 'Előjegyzés'),
+          NavigationDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: 'Előjegyzés / Történet'),
           NavigationDestination(icon: Icon(Icons.playlist_add_check_outlined), selectedIcon: Icon(Icons.playlist_add_check), label: 'Szabad fuvarok'),
         ],
       ),

@@ -95,7 +95,7 @@ class RemoteInspectionScreen extends StatelessWidget {
                 child: Container(
                   color: Colors.white,
                   height: 120,
-                  child: Image.network('${signature['url']}', fit: BoxFit.contain, errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+                  child: Image.network('${signature['url']}', fit: BoxFit.contain, loadingBuilder: _loading, errorBuilder: (_, __, ___) => const SizedBox.shrink()),
                 ),
               ),
           ],
@@ -123,11 +123,11 @@ class _Photos extends StatelessWidget {
           itemBuilder: (context, i) => GestureDetector(
             onTap: () => showDialog<void>(
               context: context,
-              builder: (_) => Dialog(child: InteractiveViewer(child: Image.network(urls[i], fit: BoxFit.contain))),
+              builder: (_) => Dialog(child: InteractiveViewer(child: Image.network(urls[i], fit: BoxFit.contain, loadingBuilder: _loading))),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(6),
-              child: Image.network(urls[i], width: 96, height: 96, fit: BoxFit.cover,
+              child: Image.network(urls[i], width: 96, height: 96, fit: BoxFit.cover, loadingBuilder: _loading,
                   errorBuilder: (_, __, ___) => Container(width: 96, height: 96, color: AppColors.sheet100, child: const Icon(Icons.broken_image_outlined))),
             ),
           ),
@@ -135,4 +135,21 @@ class _Photos extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Amíg a kép töltődik: forgó jel a helyén (a fotók a szerverről jönnek, lassú hálózaton sokáig).
+Widget _loading(BuildContext context, Widget child, ImageChunkEvent? progress) {
+  if (progress == null) return child;
+  final total = progress.expectedTotalBytes;
+  return Container(
+    width: 96,
+    height: 96,
+    alignment: Alignment.center,
+    color: AppColors.sheet100,
+    child: SizedBox(
+      width: 28,
+      height: 28,
+      child: CircularProgressIndicator(strokeWidth: 3, value: total == null ? null : progress.cumulativeBytesLoaded / total),
+    ),
+  );
 }

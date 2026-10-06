@@ -99,13 +99,27 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
     final leg = _leg;
     if (leg == null) return;
     final local = phase == 'PICKUP' ? _pickupExists : _dropoffExists;
+    // Lezárt útnál, ha a jegyzőkönyv már fent van a szerveren, a megtekintő nézet jön
+    // (mint a régebbi utaknál) – nem a kitöltő képernyő letiltott mezőkkel.
+    final localDraft = local ? await widget.services.local.inspectionForLeg(leg.legKey, phase) : null;
+    final closedAndSynced = leg.status == 'COMPLETED' && localDraft?.status == 'SYNCED';
     try {
-      if (local || LocalRepository.isLocalLeg(leg.legKey)) {
+      if ((local && !closedAndSynced) || LocalRepository.isLocalLeg(leg.legKey)) {
         await openInspection(context, widget.services, leg, phase);
         return;
       }
       setState(() => _busy = true);
-      final all = await widget.services.api.legInspections(leg.legKey);
+      final List<Map<String, dynamic>> all;
+      try {
+        all = await widget.services.api.legInspections(leg.legKey);
+      } catch (e) {
+        // Nincs hálózat: a telefonon lévő példány (csak megtekintés).
+        if (localDraft != null && mounted) {
+          await openInspection(context, widget.services, leg, phase);
+          return;
+        }
+        rethrow;
+      }
       final found = all.where((i) => i['inspectionType'] == phase).toList();
       if (!mounted) return;
       if (found.isEmpty) {
@@ -189,12 +203,14 @@ class _LegDetailScreenState extends State<LegDetailScreen> {
               itemBuilder: (_) => _menuItems(leg),
               tooltip: 'Az út opciói',
               // Szöveggel is: látszik, hogy itt vannak az út további műveletei.
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Út opciói', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.panelInk)),
+              child: Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: AppColors.signalYellow, borderRadius: BorderRadius.circular(18)),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('Út opciói', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.ink900)),
                   SizedBox(width: 2),
-                  Icon(Icons.more_vert, color: AppColors.panelInk),
+                  Icon(Icons.more_vert, color: AppColors.ink900),
                 ]),
               ),
             ),
